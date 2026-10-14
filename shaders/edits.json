@@ -1,0 +1,39 @@
+{
+  "comment": "Shader overlay recipe for tools/build_shaders.py. Paths are relative to <game>/Data and matched case-insensitively. 'patch' edits are exact-match on LF-normalised text and must match 'count' times or the build fails. 'replace' files are ours; expect_sha256 is the stock file they were written against, so a game update that changes it stops the build. 'add' files are new. Text in 'find' is a short anchor only, never stock code blocks.",
+  "groups": {
+    "common": [
+      {"op": "add", "path": "fx/RAF Config.fx", "src": "fx/RAF Config.fx"}
+    ],
+    "units": [
+      {"op": "replace", "path": "fx/units/include/unit functions.fx", "src": "fx/units/include/unit functions.fx",
+       "expect_sha256": "0e4a8ed63cdd4a7f8f31c1f62143c9b4fe3e3ef106fd98fcc9801b9f290ee9b1"},
+      {"op": "replace", "path": "fx/units/include/unit data structures.fx", "src": "fx/units/include/unit data structures.fx",
+       "expect_sha256": "72620d0215ea9dfd8e11cc758346ea39a8d3e738d3130b28d9c629cb4ed752a8"},
+      {"op": "patch", "path": "fx/units/normal unit.fx", "edits": [
+        {"find": "compile VS_VERSION ", "replace": "compile RAF_UNIT_VS ", "count": 5},
+        {"find": "compile PS_VERSION ", "replace": "compile RAF_UNIT_PS ", "count": 4},
+        {"find": "compile vs_1_1 VS_ZOnlyModel(", "replace": "compile RAF_UNIT_VS VS_ZOnlyModel(", "count": 1}
+      ]}
+    ],
+    "terrain": [
+      {"op": "add", "path": "fx/terrain/include/RAF Terrain.fx", "src": "fx/terrain/include/RAF Terrain.fx"},
+      {"op": "patch", "path": "fx/terrain/include/terrain functions.fx", "edits": [
+        {"find": "PS_DefaultTerrainBumpmap(in VS_OUTPUT_BUMP inVertex,", "replace": "PS_DefaultTerrainBumpmap_Stock(in VS_OUTPUT_BUMP inVertex,", "count": 1},
+        {"append": "\n/* raf-remaster: per-pixel terrain (replaces PS_DefaultTerrainBumpmap) */\n#include \"FX\\Terrain\\Include\\RAF Terrain.fx\"\n"}
+      ]},
+      {"op": "patch", "path": "fx/terrain/default terrain.fx", "edits": [
+        {"find": "compile ps_2_0 PS_DefaultTerrainBumpmap(", "replace": "compile RAF_PS_PROFILE PS_DefaultTerrainBumpmap(", "count": 3}
+      ]}
+    ],
+    "water": [
+      {"op": "add", "path": "fx/water/include/RAF Water.fx", "src": "fx/water/include/RAF Water.fx"},
+      {"op": "patch", "path": "fx/water/include/water functions.fx", "edits": [
+        {"find": "PS_AdvancedWater(in VS_ADV_WATER_OUTPUT inVertex,", "replace": "PS_AdvancedWater_Stock(in VS_ADV_WATER_OUTPUT inVertex,", "count": 1},
+        {"append": "\n/* raf-remaster: water fresnel and glint (replaces PS_AdvancedWater) */\n#include \"FX\\Water\\Include\\RAF Water.fx\"\n"}
+      ]},
+      {"op": "patch", "path": "fx/water/default water.fx", "edits": [
+        {"find": "compile ps_2_0 PS_AdvancedWater(", "replace": "compile RAF_PS_PROFILE PS_AdvancedWater(", "count": 2}
+      ]}
+    ]
+  }
+}
