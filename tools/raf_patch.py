@@ -43,6 +43,15 @@ start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" %*
 CREATED = ["d3d9.dll", "dxvk.conf", "RiseAndFall Remaster.bat"]
 # Files the patcher modifies; revert restores them from orig/.
 MODIFIED = [EXE]
+# Intro movies; the launcher's own install ships without the last four, so the game runs without them.
+# apply moves them into orig/, revert moves them back.
+REMOVED = [
+    "Data/movies/Midway Bink.bik",
+    "Data/movies/license.bik",
+    "Data/movies/ndgames_logo.bik",
+    "Data/movies/nvidia.bik",
+    "Data/movies/Opening Video.bik",
+]
 
 LAA_FLAG = 0x20
 
@@ -120,6 +129,12 @@ def apply(game: Path) -> None:
     (game / "RiseAndFall Remaster.bat").write_text(LAUNCH_BAT, encoding="ascii")
     print("launcher script: written")
 
+    for name in REMOVED:
+        if (game / name).exists():
+            (orig / name).parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(game / name, orig / name)
+    print("intro movies: removed")
+
     state = {"dxvk": DXVK_VERSION, "laa": True}
     (game / STATE_DIR / "state.json").write_text(json.dumps(state, indent=2))
 
@@ -129,6 +144,10 @@ def revert(game: Path) -> None:
     for name in MODIFIED:
         if (orig / name).exists():
             shutil.copy2(orig / name, game / name)
+            print(f"restored {name}")
+    for name in REMOVED:
+        if (orig / name).exists():
+            shutil.move(orig / name, game / name)
             print(f"restored {name}")
     for name in CREATED:
         if (game / name).exists():
