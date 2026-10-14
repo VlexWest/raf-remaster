@@ -76,6 +76,16 @@ BORDERLESS = [
     ("DX9Rasterizer.dll", 0x100318D3, "6a08", "6a00", "no WS_EX_TOPMOST"),
 ]
 
+# Camera scrolling (keys and screen edge) advances in steps of a 25 ms TMPoll, so the camera
+# moves at 40 Hz however fast the game renders. Use a 5 ms step with a 5x smaller distance per
+# step (same speed), and keep the old 500 ms catch-up cap (20 x 25 ms = 100 x 5 ms).
+SMOOTH_SCROLL = [
+    (EXE, 0x0040C801, "19", "05", "scroll TMPoll period 25 ms -> 5 ms"),
+    (EXE, 0x0040C788, "14", "64", "catch-up cap compare 20 -> 100 periods"),
+    (EXE, 0x0040C78F, "14000000", "64000000", "catch-up cap value 20 -> 100 periods"),
+    (EXE, 0x00C4D8B4, "0000803e", "cdcc4c3d", "distance per period 0.25 -> 0.05 (only the 2 scroll fns use it)"),
+]
+
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -234,8 +244,15 @@ def apply(game: Path, borderless: bool = True) -> None:
         set_laa(exe)
         print("LAA: set")
 
+    w, h, hz = desktop_mode()
     shutil.copy2(dxvk_d3d9(), game / "d3d9.dll")
-    (game / "dxvk.conf").write_text(DXVK_CONF, encoding="ascii")
+    conf = DXVK_CONF
+    if not borderless:
+        # The game keeps the first refresh rate the adapter lists per resolution (DXVK: the highest,
+        # native d3d9: the lowest, which is how exclusive fullscreen ended up at 30 Hz). Only list
+        # the desktop rate.
+        conf += f"d3d9.forceRefreshRate = {hz}\n"
+    (game / "dxvk.conf").write_text(conf, encoding="ascii")
     print(f"DXVK {DXVK_VERSION}: installed")
 
     (game / "RiseAndFall Remaster.bat").write_text(LAUNCH_BAT, encoding="ascii")
@@ -248,13 +265,15 @@ def apply(game: Path, borderless: bool = True) -> None:
     print("intro movies: removed")
 
     byte_patches(game, BORDERLESS, borderless, "borderless window")
+    byte_patches(game, SMOOTH_SCROLL, True, "smooth camera scroll")
 
     # Full Screen Mode stays 1: the game's own windowed mode hangs on a white window.
     # The game drops a resolution missing from the adapter's mode list back to 1024x768
     # (and autodetect can write 800x600), so we always write the current desktop mode.
-    w, h, hz = desktop_mode()
+    # Wait for VSync 1 = PresentationInterval ONE: frames paced to the display refresh instead of
+    # 400+ fps with tearing. Rendering stays decoupled from the simulation (own physics thread).
     set_registry(game, {"Full Screen Mode": 1, "Game Window Width": w, "Game Window Height": h,
-                        "Custom Refresh Rate": hz})
+                        "Custom Refresh Rate": hz, "Wait for VSync": 1})
 
     state = {"dxvk": DXVK_VERSION, "laa": True, "borderless": borderless, "mode": [w, h, hz]}
     (game / STATE_DIR / "state.json").write_text(json.dumps(state, indent=2))
