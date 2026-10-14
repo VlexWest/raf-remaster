@@ -1,7 +1,8 @@
 """Apply or revert the Rise and Fall remaster patches on an existing install.
 
 Usage:
-    python raf_patch.py apply  <game_dir> [--only a,b] [--skip a,b] [--stock <dir>] [--rebuild]
+    python raf_patch.py apply  <game_dir> [--only a,b] [--skip a,b] [--mutator name|none]
+                               [--stock <dir>] [--rebuild]
     python raf_patch.py revert <game_dir>
     python raf_patch.py status <game_dir>
     python raf_patch.py features
@@ -10,7 +11,11 @@ Features (see FEATURES; `features` prints them with their default):
   borderless, smooth-scroll, zoom      exe/DLL byte patches
   mips, hd-terrain, hd-units           texture overlays (hd wins over mips on shared files)
   shaders                              fx overlay (shader.cache is moved aside so the game rebuilds it)
-  ai-hard, unit-ai, maps               gameplay data (all players need the same set: REMASTER.txt)
+  ai-hard, ai-personalities, unit-ai, maps, survival
+                                       gameplay data (all players need the same set: REMASTER.txt)
+  lang-en                              English language pack (needs work/lang/en.json, not in the repo)
+--mutator <name> installs work/overlay-mutators/<name> last (one at a time, gameplay data);
+--mutator none removes it.
 Always installed: LAA flag, DXVK, no intro movies, start/host/join scripts, REMASTER.txt.
 Without borderless the game runs in exclusive fullscreen at the desktop resolution.
 --only/--skip start from the default set; the chosen set is stored in state.json and an
@@ -252,40 +257,56 @@ def desktop_mode() -> tuple[int, int, int]:
     return dm.w, dm.h, dm.hz
 
 
-def set_registry(game: Path, values: dict) -> None:
-    """Set DWORD values under REG_KEY, saving the values found before the first apply."""
+def _reg_split(name: str):
+    """'Sub/Value' -> (REG_KEY\\Sub, Value); plain names live in REG_KEY."""
+    sub, _, value = name.rpartition("/")
+    return (REG_KEY + "\\" + sub if sub else REG_KEY), value
+
+
+def set_registry(game: Path, values: dict, release=()) -> None:
+    """Set DWORD values (names may be 'Subkey/Value'), saving the values found before the
+    first apply; names in `release` go back to their saved value."""
     import winreg
 
     saved_path = game / STATE_DIR / "registry.json"
     saved = json.loads(saved_path.read_text()) if saved_path.exists() else {}
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REG_KEY) as key:
-        for name, value in values.items():
+    for name, value in values.items():
+        path, val = _reg_split(name)
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as key:
             if name not in saved:
                 try:
-                    saved[name] = winreg.QueryValueEx(key, name)[0]
+                    saved[name] = winreg.QueryValueEx(key, val)[0]
                 except FileNotFoundError:
                     saved[name] = None
-            winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, value)
+            winreg.SetValueEx(key, val, 0, winreg.REG_DWORD, value)
+    for name in release:
+        if name in saved:
+            _reg_restore(name, saved.pop(name))
     saved_path.write_text(json.dumps(saved, indent=2))
     print("registry: " + ", ".join(f"{k}={v}" for k, v in values.items()))
 
 
-def restore_registry(game: Path) -> None:
+def _reg_restore(name: str, value) -> None:
     import winreg
 
+    path, val = _reg_split(name)
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as key:
+        if value is None:
+            try:
+                winreg.DeleteValue(key, val)
+            except FileNotFoundError:
+                pass
+        else:
+            winreg.SetValueEx(key, val, 0, winreg.REG_DWORD, value)
+
+
+def restore_registry(game: Path) -> None:
     saved_path = game / STATE_DIR / "registry.json"
     if not saved_path.exists():
         return
     saved = json.loads(saved_path.read_text())
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REG_KEY) as key:
-        for name, value in saved.items():
-            if value is None:
-                try:
-                    winreg.DeleteValue(key, name)
-                except FileNotFoundError:
-                    pass
-            else:
-                winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, value)
+    for name, value in saved.items():
+        _reg_restore(name, value)
     print("registry: restored " + ", ".join(saved))
 
 
@@ -327,6 +348,8 @@ class Overlay:
         return (self.root / "Data").is_dir() and (marker is None or marker.exists())
 
     def build(self, stock: Path) -> None:
+        if self.build_cmd is None:
+            sys.exit(f"{self.name}: overlay {self.root} is missing; it is built by its own tool (see docs)")
         cmd = [str(c) for c in self.build_cmd(stock)]
         print(f"{self.name}: building: {' '.join(cmd)}")
         subprocess.run(cmd, cwd=REPO, check=True)
@@ -379,25 +402,50 @@ OVERLAYS = {
     "ai-hard": Overlay("ai-hard", WORK / "overlay-ai",
                        lambda st: [PY, "tools/build_ai_db.py", st, WORK / "overlay-ai"],
                        manifest=WORK / "overlay-ai" / "manifest.json"),
+    # build_ai_db --personalities writes both tables; this feature installs only dbcivspecai.dat
+    "ai-personalities": Overlay("ai-personalities", WORK / "overlay-ai-pers",
+                                lambda st: [PY, "tools/build_ai_db.py", st, WORK / "overlay-ai-pers", "--personalities"],
+                                mapping=lambda: {"Data/db/dbcivspecai.dat": WORK / "overlay-ai-pers" / "Data" / "db" / "dbcivspecai.dat"}),
     "unit-ai": Overlay("unit-ai", REPO / "ai", lambda st: [PY, "tools/build_ai.py", "build", "--game", st],
                        mapping=_unit_ai_files),
     "maps": Overlay("maps", REPO / "rms", lambda st: [PY, "tools/gen_rms.py"], mapping=_map_files),
+    # built by other tools; installed only when present (docs/survival.md, docs/language.md)
+    "survival": Overlay("survival", WORK / "overlay-survival", None, manifest=WORK / "overlay-survival" / "manifest.json"),
+    "lang-en": Overlay("lang-en", WORK / "overlay-lang-en", None, manifest=WORK / "overlay-lang-en" / "manifest.json"),
 }
+MUTATOR_DIR = WORK / "overlay-mutators"  # one sub folder per mutator (docs/mutators.md); at most one active
+
+
+def mutator_overlay(name: str) -> Overlay:
+    root = MUTATOR_DIR / name
+    if not (root / "Data").is_dir():
+        known = sorted(d.name for d in MUTATOR_DIR.iterdir() if d.is_dir()) if MUTATOR_DIR.is_dir() else []
+        sys.exit(f"unknown mutator {name!r}; built: {', '.join(known) or 'none'}")
+    return Overlay(f"mutator:{name}", root, None, manifest=root / "manifest.json")
 
 # name -> default on. Overlay order = install priority: a later feature wins where two touch a file.
 FEATURES = {
     "borderless": True,
     "smooth-scroll": True,
     "zoom": True,
+    "ultra": True,
     "mips": False,
     "hd-terrain": False,
     "hd-units": False,
     "shaders": False,
     "ai-hard": False,
+    "ai-personalities": False,
     "unit-ai": False,
     "maps": False,
+    "survival": False,
+    "lang-en": False,
 }
-OVERLAY_ORDER = ["mips", "hd-terrain", "hd-units", "shaders", "ai-hard", "unit-ai", "maps"]
+# The autodetect does not know the GPU and leaves every quality at 0 ("Низко"); 3 = "Ультра".
+# The shader upgrade only shows with the higher techniques.
+ULTRA = {f"Graphics Settings/{n} Quality Level": 3 for n in ("Model", "Water", "Particle", "Terrain")}
+ULTRA.update({"Graphics Settings/Flora Quality": 3,
+              "Render Reflections": 1, "Flora Enabled": 1})
+OVERLAY_ORDER = list(OVERLAYS)  # dict order = install priority; the mutator goes last
 # Files that decide the simulation; all players must match (REMASTER.txt fingerprint).
 GAMEPLAY_DIRS = ["Data/db", "Data/random map scripts", "Data/unit ai scripts"]
 
@@ -414,11 +462,12 @@ def sync_overlays(game: Path, enabled: list, stock: Path, rebuild: bool, state: 
     managed = dict(state.get("managed", {}))  # rel -> feature currently installed
     created = set(state.get("created", []))   # rel that does not exist in stock
     plan, stock_hash = {}, {}
-    for name in OVERLAY_ORDER:
-        if name not in enabled:
-            continue
-        ov = OVERLAYS[name]
-        if rebuild or not ov.built():
+    active = [OVERLAYS[n] for n in OVERLAY_ORDER if n in enabled]
+    if state.get("mutator"):
+        active.append(mutator_overlay(state["mutator"]))
+    for ov in active:
+        name = ov.name
+        if (rebuild and ov.build_cmd) or not ov.built():
             ov.build(stock)
         hashes = ov.stock_hashes()
         for rel, src in ov.files().items():
@@ -455,9 +504,8 @@ def sync_overlays(game: Path, enabled: list, stock: Path, rebuild: bool, state: 
             shutil.copy2(src, dst)
         managed[rel] = name
         counts[name] = counts.get(name, 0) + 1
-    for name in OVERLAY_ORDER:
-        if name in enabled:
-            print(f"{name}: {counts.get(name, 0)} files")
+    for ov in active:
+        print(f"{ov.name}: {counts.get(ov.name, 0)} files")
     state["managed"], state["created"] = managed, sorted(created)
 
 
@@ -486,6 +534,9 @@ def fingerprint(game: Path) -> str:
 def check_game_dir(game: Path) -> None:
     if not (game / EXE).is_file():
         sys.exit(f"{EXE} not found in {game}")
+    out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {EXE}", "/NH"], capture_output=True, text=True).stdout
+    if EXE.lower() in out.lower():
+        sys.exit(f"{EXE} is running; close the game first")
 
 
 def load_state(game: Path) -> dict:
@@ -503,11 +554,13 @@ def choose_features(state: dict, only, skip) -> list:
     return [f for f in FEATURES if f in base and f not in (skip or [])]
 
 
-def apply(game: Path, only=None, skip=None, stock=None, rebuild=False) -> None:
+def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=None) -> None:
     orig = game / STATE_DIR / "orig"
     orig.mkdir(parents=True, exist_ok=True)
     state = load_state(game)
     feats = choose_features(state, only, skip)
+    if mutator is not None:
+        state["mutator"] = None if mutator in ("", "none") else mutator
     stock = Path(stock) if stock else default_stock(game)
     for name in MODIFIED:
         if not (orig / name).exists():
@@ -555,11 +608,18 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False) -> None:
     # 400+ fps with tearing. Rendering stays decoupled from the simulation (own physics thread).
     reg = {"Full Screen Mode": 1, "Game Window Width": w, "Game Window Height": h,
            "Custom Refresh Rate": hz, "Wait for VSync": 1}
+    release = []
     if "zoom" in feats:
         # far clip = this/100 x 43.3; 60 (the autodetected minimum) cuts the far terrain at the
         # new zoom distance; 160 gives 69 units.
         reg["RearClipPlaneModifier"] = 160
-    set_registry(game, reg)
+    else:
+        release.append("RearClipPlaneModifier")
+    if "ultra" in feats:
+        reg.update(ULTRA)
+    else:
+        release += list(ULTRA)
+    set_registry(game, reg, release)
 
     fp = fingerprint(game)
     (game / "REMASTER.txt").write_text(
@@ -620,7 +680,7 @@ def main() -> None:
     argv, opts, args = sys.argv[1:], {}, []
     while argv:
         a = argv.pop(0)
-        if a in ("--only", "--skip", "--stock"):
+        if a in ("--only", "--skip", "--stock", "--mutator"):
             if not argv:
                 sys.exit(__doc__)
             opts[a] = argv.pop(0)
@@ -632,7 +692,7 @@ def main() -> None:
             args.append(a)
     if args == ["features"]:
         for f, on in FEATURES.items():
-            print(f"{f:14s} {'default on' if on else 'default off'}")
+            print(f"{f:17s} {'default on' if on else 'default off'}")
         return
     if len(args) != 2 or args[0] not in ("apply", "revert", "status"):
         sys.exit(__doc__)
@@ -642,7 +702,7 @@ def main() -> None:
         def split(v):
             return None if v is None else [x.strip() for x in v.split(",") if x.strip()]
         apply(game, only=split(opts.get("--only")), skip=split(opts.get("--skip")),
-              stock=opts.get("--stock"), rebuild=bool(opts.get("--rebuild")))
+              stock=opts.get("--stock"), rebuild=bool(opts.get("--rebuild")), mutator=opts.get("--mutator"))
     else:
         {"revert": revert, "status": status}[args[0]](game)
 
