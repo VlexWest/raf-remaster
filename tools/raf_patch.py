@@ -86,6 +86,27 @@ SMOOTH_SCROLL = [
     (EXE, 0x00C4D8B4, "0000803e", "cdcc4c3d", "distance per period 0.25 -> 0.05 (only the 2 scroll fns use it)"),
 ]
 
+# Camera zoom is a fraction 0..1 at 0x101dcc0 (camera object 0x101dbbc + 0x104); the wheel
+# (FUN_009286c0) and zoom hotkeys (FUN_00908c00) clamp it to 1.0 and a new game starts at 1.0.
+# FUN_006d32c0: distance = (base / sin(pitch) - 0.1) * zoom + 0.1, pitch lerps -5 -> -48 deg
+# over the zoom range. Letting zoom run past 1.0 tilts the camera to ~-70 deg and shows little
+# more ground (tested: zoom 1.5 = height 11.0 vs 7.6 but nearly top-down), so instead the RTS
+# preset base distance (FUN_006cf720) goes from -6.7 to -10.05: every zoom step and the maximum
+# are 1.5x farther at the same angles. The ZoomStyle 0 distance clamp -13.2 (FUN_006d32c0) would
+# cut that (max is now about -13.5), so it moves to -19.8.
+ZOOM_OUT = [
+    (EXE, 0x006CF731, "bb6666d6c0", "bbcdcc20c1", "RTS camera base distance -6.7 -> -10.05"),
+    (EXE, 0x00C5FB50, "333353c1", "66669ec1", "ZoomStyle 0 distance clamp -13.2 -> -19.8 (compare)"),
+    (EXE, 0x006D34CA, "b8333353c1", "b866669ec1", "ZoomStyle 0 distance clamp -13.2 -> -19.8 (value)"),
+]
+# Old wheel/hotkey clamp patches (zoom up to 1.5): byte_patches() undoes them on installs that had them.
+ZOOM_PAST_ONE = [
+    (EXE, 0x009288A7, "d81decd1c400", "d81d34d4c400", "wheel: compare zoom with 1.5"),
+    (EXE, 0x009288B2, "b80000803f", "b80000c03f", "wheel: clamp zoom to 1.5"),
+    (EXE, 0x00908D1E, "d81decd1c400", "d81d34d4c400", "hotkey: compare zoom with 1.5"),
+    (EXE, 0x00908D50, "b80000803f", "b80000c03f", "hotkey: clamp zoom to 1.5"),
+]
+
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -266,6 +287,8 @@ def apply(game: Path, borderless: bool = True) -> None:
 
     byte_patches(game, BORDERLESS, borderless, "borderless window")
     byte_patches(game, SMOOTH_SCROLL, True, "smooth camera scroll")
+    byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0")
+    byte_patches(game, ZOOM_OUT, True, "zoom out 1.5x")
 
     # Full Screen Mode stays 1: the game's own windowed mode hangs on a white window.
     # The game drops a resolution missing from the adapter's mode list back to 1024x768
@@ -273,7 +296,10 @@ def apply(game: Path, borderless: bool = True) -> None:
     # Wait for VSync 1 = PresentationInterval ONE: frames paced to the display refresh instead of
     # 400+ fps with tearing. Rendering stays decoupled from the simulation (own physics thread).
     set_registry(game, {"Full Screen Mode": 1, "Game Window Width": w, "Game Window Height": h,
-                        "Custom Refresh Rate": hz, "Wait for VSync": 1})
+                        "Custom Refresh Rate": hz, "Wait for VSync": 1,
+                        # far clip = this/100 x 43.3; 60 (the autodetected minimum) cuts the
+                        # far terrain at the new zoom distance; 160 gives 69 units.
+                        "RearClipPlaneModifier": 160})
 
     state = {"dxvk": DXVK_VERSION, "laa": True, "borderless": borderless, "mode": [w, h, hz]}
     (game / STATE_DIR / "state.json").write_text(json.dumps(state, indent=2))
