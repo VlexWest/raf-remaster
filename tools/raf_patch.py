@@ -1,16 +1,27 @@
 """Apply or revert the Rise and Fall remaster patches on an existing install.
 
 Usage:
-    python raf_patch.py apply  <game_dir> [--fullscreen]
+    python raf_patch.py apply  <game_dir> [--only a,b] [--skip a,b] [--stock <dir>] [--rebuild]
     python raf_patch.py revert <game_dir>
     python raf_patch.py status <game_dir>
+    python raf_patch.py features
 
-apply defaults to borderless fullscreen at the desktop resolution; --fullscreen keeps
-the original exclusive fullscreen (also at the desktop resolution).
+Features (see FEATURES; `features` prints them with their default):
+  borderless, smooth-scroll, zoom      exe/DLL byte patches
+  mips, hd-terrain, hd-units           texture overlays (hd wins over mips on shared files)
+  shaders                              fx overlay (shader.cache is moved aside so the game rebuilds it)
+  ai-hard, unit-ai, maps               gameplay data (all players need the same set: REMASTER.txt)
+Always installed: LAA flag, DXVK, no intro movies, start/host/join scripts, REMASTER.txt.
+Without borderless the game runs in exclusive fullscreen at the desktop resolution.
+--only/--skip start from the default set; the chosen set is stored in state.json and an
+apply without them reuses it.
 
-Everything is idempotent. Originals are kept in <game_dir>/.raf-remaster/orig
-so `revert` restores the install byte for byte. Registry values the patcher sets
-are saved in <game_dir>/.raf-remaster/registry.json and restored by `revert`.
+Overlays are built from a STOCK install (--stock, default the original "Rise and Fall" folder
+next to the game dir, else the game dir itself before any overlay is installed) into
+<repo>/work/overlay*, never from a modified copy, and every file is checked against the
+stock hash before it is replaced. Everything is idempotent. Originals are kept in
+<game_dir>/.raf-remaster/orig so `revert` restores the install byte for byte. Registry
+values the patcher sets are saved in <game_dir>/.raf-remaster/registry.json.
 """
 
 import ctypes
@@ -19,14 +30,18 @@ import hashlib
 import json
 import shutil
 import struct
+import subprocess
 import sys
 import tarfile
 import urllib.request
 from pathlib import Path
 
+REMASTER_VERSION = "0.3.0"
 EXE = "RiseAndFall.exe"
 STATE_DIR = ".raf-remaster"
-CACHE = Path(__file__).resolve().parent.parent / "work" / "cache"
+REPO = Path(__file__).resolve().parent.parent
+CACHE = REPO / "work" / "cache"
+DEFAULT_STOCK = Path(r"D:\Games\Rise and Fall")
 
 DXVK_VERSION = "3.1.1"
 DXVK_URL = f"https://github.com/doitsujin/dxvk/releases/download/v{DXVK_VERSION}/dxvk-{DXVK_VERSION}.tar.gz"
@@ -42,11 +57,39 @@ d3d9.samplerAnisotropy = 16
 LAUNCH_BAT = """\
 @echo off
 cd /d "%~dp0"
+type REMASTER.txt
 start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" %*
 """
 
+# Command line: the game splits it on '-', value between the first pair of quotes,
+# so values must not contain '-'.
+HOST_BAT = """\
+@echo off
+rem Host a network game: Host.bat ["Game name"]   (no '-' in the name)
+cd /d "%~dp0"
+type REMASTER.txt
+echo.
+echo Compare the fingerprint above with the other players before starting.
+set "NAME=%~1"
+if "%NAME%"=="" set "NAME=RAF Remaster"
+start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" -hostgame "%NAME%"
+"""
+
+JOIN_BAT = """\
+@echo off
+rem Join a network game by IP: Join.bat [1.2.3.4]
+cd /d "%~dp0"
+type REMASTER.txt
+echo.
+echo Compare the fingerprint above with the host before joining.
+set "IP=%~1"
+if "%IP%"=="" set /p "IP=IP address of the host: "
+if "%IP%"=="" exit /b 1
+start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" -joinbyip "%IP%"
+"""
+
 # Files the patcher creates from scratch; revert deletes them.
-CREATED = ["d3d9.dll", "dxvk.conf", "RiseAndFall Remaster.bat"]
+CREATED = ["d3d9.dll", "dxvk.conf", "RiseAndFall Remaster.bat", "Host.bat", "Join.bat", "REMASTER.txt"]
 # Files the patcher modifies; revert restores them from orig/.
 MODIFIED = [EXE, "DX9Rasterizer.dll"]
 # Intro movies; the launcher's own install ships without the last four, so the game runs without them.
@@ -246,14 +289,226 @@ def restore_registry(game: Path) -> None:
     print("registry: restored " + ", ".join(saved))
 
 
+
+# ---------------------------------------------------------------- overlay features
+
+PY = sys.executable
+WORK = REPO / "work"
+
+
+def _manifest_hashes(path) -> dict:
+    """{relative path (lower, '/'): stock sha256 or None} from any of our manifest formats."""
+    if path is None or not path.exists():
+        return {}
+    m = json.loads(path.read_text(encoding="utf-8"))
+    files = m.get("files", [])
+    if isinstance(files, dict):
+        items = files.items()
+    else:
+        items = [(f.get("file") or f.get("path"), f) for f in files]
+    out = {}
+    for rel, f in items:
+        out[rel.replace("\\", "/").lower()] = f.get("source_sha256") or f.get("stock_sha256")
+    return out
+
+
+class Overlay:
+    """A set of files (relative install path -> source file) built from the stock install."""
+
+    def __init__(self, name, root, build, manifest=None, select=None, mapping=None):
+        self.name, self.root, self.build_cmd = name, root, build
+        self.manifest, self.select, self.mapping = manifest, select, mapping
+
+    def built(self) -> bool:
+        if self.mapping:
+            files = self.mapping()
+            return bool(files) and all(src.exists() for src in files.values())
+        marker = self.select or self.manifest
+        return (self.root / "Data").is_dir() and (marker is None or marker.exists())
+
+    def build(self, stock: Path) -> None:
+        cmd = [str(c) for c in self.build_cmd(stock)]
+        print(f"{self.name}: building: {' '.join(cmd)}")
+        subprocess.run(cmd, cwd=REPO, check=True)
+
+    def files(self) -> dict:
+        """{rel install path: source path}"""
+        if self.mapping:
+            return self.mapping()
+        keep = set(_manifest_hashes(self.select)) if self.select else None
+        out = {}
+        for f in sorted((self.root / "Data").rglob("*")):
+            if f.is_file():
+                rel = f.relative_to(self.root).as_posix()
+                if keep is None or rel.lower() in keep:
+                    out[rel] = f
+        return out
+
+    def stock_hashes(self) -> dict:
+        return _manifest_hashes(self.select or self.manifest)
+
+
+def _unit_ai_files() -> dict:
+    src = REPO / "ai" / "unit ai scripts"
+    return {f"Data/unit ai scripts/{f.name.lower()}": f for f in sorted(src.glob("*.tai"))}
+
+
+# Mode A of docs/maps.md: the exe has a fixed table of 13 random-map names, so the new scripts
+# replace three slots that are not in the tourney set. The lobby keeps the old names.
+MAP_SLOTS = {"archipelago.rmv": "caspian sea.rmv", "twin rivers.rmv": "channels.rmv",
+             "uplands.rmv": "peloponnese.rmv"}
+
+
+def _map_files() -> dict:
+    return {f"Data/random map scripts/{slot}": REPO / "rms" / src for src, slot in MAP_SLOTS.items()}
+
+
+OVERLAYS = {
+    "mips": Overlay("mips", WORK / "overlay",
+                    lambda st: [PY, "tools/build_textures.py", st, WORK / "overlay"],
+                    manifest=WORK / "overlay" / "manifest.json"),
+    "hd-terrain": Overlay("hd-terrain", WORK / "overlay-hd",
+                          lambda st: [PY, "tools/build_textures.py", "hd-terrain", st, WORK / "overlay-hd"],
+                          select=WORK / "overlay-hd" / "manifest-hd-terrain.json"),
+    "hd-units": Overlay("hd-units", WORK / "overlay-hd",
+                        lambda st: [PY, "tools/build_textures.py", "hd-units", st, WORK / "overlay-hd"],
+                        select=WORK / "overlay-hd" / "manifest-hd-units.json"),
+    "shaders": Overlay("shaders", WORK / "overlay-shaders",
+                       lambda st: [PY, "tools/build_shaders.py", st, WORK / "overlay-shaders"],
+                       manifest=WORK / "overlay-shaders" / "shader-manifest.json"),
+    "ai-hard": Overlay("ai-hard", WORK / "overlay-ai",
+                       lambda st: [PY, "tools/build_ai_db.py", st, WORK / "overlay-ai"],
+                       manifest=WORK / "overlay-ai" / "manifest.json"),
+    "unit-ai": Overlay("unit-ai", REPO / "ai", lambda st: [PY, "tools/build_ai.py", "build", "--game", st],
+                       mapping=_unit_ai_files),
+    "maps": Overlay("maps", REPO / "rms", lambda st: [PY, "tools/gen_rms.py"], mapping=_map_files),
+}
+
+# name -> default on. Overlay order = install priority: a later feature wins where two touch a file.
+FEATURES = {
+    "borderless": True,
+    "smooth-scroll": True,
+    "zoom": True,
+    "mips": False,
+    "hd-terrain": False,
+    "hd-units": False,
+    "shaders": False,
+    "ai-hard": False,
+    "unit-ai": False,
+    "maps": False,
+}
+OVERLAY_ORDER = ["mips", "hd-terrain", "hd-units", "shaders", "ai-hard", "unit-ai", "maps"]
+# Files that decide the simulation; all players must match (REMASTER.txt fingerprint).
+GAMEPLAY_DIRS = ["Data/db", "Data/random map scripts", "Data/unit ai scripts"]
+
+
+def default_stock(game: Path) -> Path:
+    if DEFAULT_STOCK.is_dir() and DEFAULT_STOCK.resolve() != game.resolve():
+        return DEFAULT_STOCK
+    return game
+
+
+def sync_overlays(game: Path, enabled: list, stock: Path, rebuild: bool, state: dict) -> None:
+    """Install the overlay files of the enabled features and put every other managed file back."""
+    orig = game / STATE_DIR / "orig"
+    managed = dict(state.get("managed", {}))  # rel -> feature currently installed
+    created = set(state.get("created", []))   # rel that does not exist in stock
+    plan, stock_hash = {}, {}
+    for name in OVERLAY_ORDER:
+        if name not in enabled:
+            continue
+        ov = OVERLAYS[name]
+        if rebuild or not ov.built():
+            ov.build(stock)
+        hashes = ov.stock_hashes()
+        for rel, src in ov.files().items():
+            plan[rel] = (name, src)
+            stock_hash[rel] = hashes.get(rel.lower())
+    for rel in [r for r in managed if r not in plan]:
+        dst, bak = game / rel, orig / rel
+        if rel in created:
+            dst.unlink(missing_ok=True)
+            created.discard(rel)
+        elif bak.exists():
+            shutil.copy2(bak, dst)
+            bak.unlink()
+        del managed[rel]
+    counts = {}
+    for rel, (name, src) in plan.items():
+        dst, bak = game / rel, orig / rel
+        want = sha256(src)
+        if rel not in managed:
+            if dst.exists():
+                cur = sha256(dst)
+                expect = stock_hash.get(rel)
+                if expect is None and (stock / rel).exists():
+                    expect = sha256(stock / rel)
+                if cur != want and expect and cur != expect:
+                    sys.exit(f"{rel}: not the stock file (sha {cur[:12]}), refusing to replace it")
+                if not bak.exists():
+                    bak.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(dst, bak)
+            else:
+                created.add(rel)
+        if not dst.exists() or sha256(dst) != want:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        managed[rel] = name
+        counts[name] = counts.get(name, 0) + 1
+    for name in OVERLAY_ORDER:
+        if name in enabled:
+            print(f"{name}: {counts.get(name, 0)} files")
+    state["managed"], state["created"] = managed, sorted(created)
+
+
+def shader_cache_reset(game: Path) -> None:
+    """The game caches shader permutations in shader.cache; move it aside so it is rebuilt."""
+    cache, bak = game / "shader.cache", game / STATE_DIR / "orig" / "shader.cache"
+    if cache.exists():
+        if not bak.exists():
+            shutil.move(cache, bak)
+        else:
+            cache.unlink()
+        print("shader.cache: moved aside, the game rebuilds it")
+
+
+def fingerprint(game: Path) -> str:
+    """Short hash over the files that decide the simulation (db, random maps, unit AI)."""
+    h = hashlib.sha256()
+    for d in GAMEPLAY_DIRS:
+        for f in sorted((game / d).rglob("*"), key=lambda p: p.as_posix().lower()):
+            if f.is_file():
+                h.update(f.relative_to(game).as_posix().lower().encode() + b"\0")
+                h.update(hashlib.sha256(f.read_bytes()).digest())
+    return h.hexdigest()[:12]
+
+
 def check_game_dir(game: Path) -> None:
     if not (game / EXE).is_file():
         sys.exit(f"{EXE} not found in {game}")
 
 
-def apply(game: Path, borderless: bool = True) -> None:
+def load_state(game: Path) -> dict:
+    p = game / STATE_DIR / "state.json"
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def choose_features(state: dict, only, skip) -> list:
+    if only is None and skip is None and "features" in state:
+        return list(state["features"])
+    base = [f for f, on in FEATURES.items() if on] if only is None else list(only)
+    for f in base + list(skip or []):
+        if f not in FEATURES:
+            sys.exit(f"unknown feature {f!r}; known: {', '.join(FEATURES)}")
+    return [f for f in FEATURES if f in base and f not in (skip or [])]
+
+
+def apply(game: Path, only=None, skip=None, stock=None, rebuild=False) -> None:
     orig = game / STATE_DIR / "orig"
     orig.mkdir(parents=True, exist_ok=True)
+    state = load_state(game)
+    feats = choose_features(state, only, skip)
+    stock = Path(stock) if stock else default_stock(game)
     for name in MODIFIED:
         if not (orig / name).exists():
             shutil.copy2(game / name, orig / name)
@@ -265,6 +520,7 @@ def apply(game: Path, borderless: bool = True) -> None:
         set_laa(exe)
         print("LAA: set")
 
+    borderless = "borderless" in feats
     w, h, hz = desktop_mode()
     shutil.copy2(dxvk_d3d9(), game / "d3d9.dll")
     conf = DXVK_CONF
@@ -276,38 +532,66 @@ def apply(game: Path, borderless: bool = True) -> None:
     (game / "dxvk.conf").write_text(conf, encoding="ascii")
     print(f"DXVK {DXVK_VERSION}: installed")
 
-    (game / "RiseAndFall Remaster.bat").write_text(LAUNCH_BAT, encoding="ascii")
-    print("launcher script: written")
-
     for name in REMOVED:
         if (game / name).exists():
             (orig / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.move(game / name, orig / name)
     print("intro movies: removed")
 
-    byte_patches(game, BORDERLESS, borderless, "borderless window")
-    byte_patches(game, SMOOTH_SCROLL, True, "smooth camera scroll")
-    byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0")
-    byte_patches(game, ZOOM_OUT, True, "zoom out 1.5x")
+    byte_patches(game, BORDERLESS, borderless, "borderless")
+    byte_patches(game, SMOOTH_SCROLL, "smooth-scroll" in feats, "smooth-scroll")
+    byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0 (old)")
+    byte_patches(game, ZOOM_OUT, "zoom" in feats, "zoom")
+
+    had_shaders = "shaders" in state.get("features", [])
+    sync_overlays(game, feats, stock, rebuild, state)
+    if had_shaders != ("shaders" in feats) or ("shaders" in feats and rebuild):
+        shader_cache_reset(game)
 
     # Full Screen Mode stays 1: the game's own windowed mode hangs on a white window.
     # The game drops a resolution missing from the adapter's mode list back to 1024x768
     # (and autodetect can write 800x600), so we always write the current desktop mode.
     # Wait for VSync 1 = PresentationInterval ONE: frames paced to the display refresh instead of
     # 400+ fps with tearing. Rendering stays decoupled from the simulation (own physics thread).
-    set_registry(game, {"Full Screen Mode": 1, "Game Window Width": w, "Game Window Height": h,
-                        "Custom Refresh Rate": hz, "Wait for VSync": 1,
-                        # far clip = this/100 x 43.3; 60 (the autodetected minimum) cuts the
-                        # far terrain at the new zoom distance; 160 gives 69 units.
-                        "RearClipPlaneModifier": 160})
+    reg = {"Full Screen Mode": 1, "Game Window Width": w, "Game Window Height": h,
+           "Custom Refresh Rate": hz, "Wait for VSync": 1}
+    if "zoom" in feats:
+        # far clip = this/100 x 43.3; 60 (the autodetected minimum) cuts the far terrain at the
+        # new zoom distance; 160 gives 69 units.
+        reg["RearClipPlaneModifier"] = 160
+    set_registry(game, reg)
 
-    state = {"dxvk": DXVK_VERSION, "laa": True, "borderless": borderless, "mode": [w, h, hz]}
+    fp = fingerprint(game)
+    (game / "REMASTER.txt").write_text(
+        f"Rise and Fall Remaster {REMASTER_VERSION}\r\n"
+        f"Features: {', '.join(feats) or '-'}\r\n"
+        f"Gameplay fingerprint: {fp}\r\n"
+        "All players of a network game need the same fingerprint.\r\n", encoding="ascii")
+    for fname, text in (("RiseAndFall Remaster.bat", LAUNCH_BAT), ("Host.bat", HOST_BAT),
+                        ("Join.bat", JOIN_BAT)):
+        (game / fname).write_bytes(text.replace("\n", "\r\n").encode("ascii"))
+    print(f"REMASTER.txt + start scripts: written (fingerprint {fp})")
+
+    state.update({"version": REMASTER_VERSION, "dxvk": DXVK_VERSION, "laa": True, "features": feats,
+                  "mode": [w, h, hz], "stock": str(stock), "fingerprint": fp})
+    state.pop("borderless", None)
     (game / STATE_DIR / "state.json").write_text(json.dumps(state, indent=2))
 
 
 def revert(game: Path) -> None:
     restore_registry(game)
+    state = load_state(game)
     orig = game / STATE_DIR / "orig"
+    created = set(state.get("created", []))
+    for rel in state.get("managed", {}):
+        if rel in created:
+            (game / rel).unlink(missing_ok=True)
+        elif (orig / rel).exists():
+            shutil.copy2(orig / rel, game / rel)
+    print(f"overlays: {len(state.get('managed', {}))} files restored")
+    if (orig / "shader.cache").exists():
+        shutil.copy2(orig / "shader.cache", game / "shader.cache")
+        print("restored shader.cache")
     for name in MODIFIED:
         if (orig / name).exists():
             shutil.copy2(orig / name, game / name)
@@ -327,19 +611,38 @@ def status(game: Path) -> None:
     print(f"LAA:  {is_laa(game / EXE)}")
     d3d9 = game / "d3d9.dll"
     print(f"DXVK: {d3d9.exists() and sha256(d3d9) == DXVK_D3D9_SHA256}")
-    state = game / STATE_DIR / "state.json"
-    print(f"state: {state.read_text() if state.exists() else 'none'}")
+    state = load_state(game)
+    print(f"features: {', '.join(state.get('features', [])) or 'none'}")
+    print(f"overlay files: {len(state.get('managed', {}))}, fingerprint: {state.get('fingerprint')}")
 
 
 def main() -> None:
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    flags = {a for a in sys.argv[1:] if a.startswith("--")}
-    if len(args) != 2 or args[0] not in ("apply", "revert", "status") or flags - {"--fullscreen"}:
+    argv, opts, args = sys.argv[1:], {}, []
+    while argv:
+        a = argv.pop(0)
+        if a in ("--only", "--skip", "--stock"):
+            if not argv:
+                sys.exit(__doc__)
+            opts[a] = argv.pop(0)
+        elif a == "--rebuild":
+            opts[a] = True
+        elif a.startswith("--"):
+            sys.exit(__doc__)
+        else:
+            args.append(a)
+    if args == ["features"]:
+        for f, on in FEATURES.items():
+            print(f"{f:14s} {'default on' if on else 'default off'}")
+        return
+    if len(args) != 2 or args[0] not in ("apply", "revert", "status"):
         sys.exit(__doc__)
     game = Path(args[1])
     check_game_dir(game)
     if args[0] == "apply":
-        apply(game, borderless="--fullscreen" not in flags)
+        def split(v):
+            return None if v is None else [x.strip() for x in v.split(",") if x.strip()]
+        apply(game, only=split(opts.get("--only")), skip=split(opts.get("--skip")),
+              stock=opts.get("--stock"), rebuild=bool(opts.get("--rebuild")))
     else:
         {"revert": revert, "status": status}[args[0]](game)
 
