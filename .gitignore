@@ -8,3 +8,6 @@ decomp/
 *.bik
 work/
 __pycache__/
+
+# build outputs derived from game files (tools/build_ai.py build)
+ai/unit ai scripts/
