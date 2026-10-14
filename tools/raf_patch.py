@@ -1,14 +1,20 @@
 """Apply or revert the Rise and Fall remaster patches on an existing install.
 
 Usage:
-    python raf_patch.py apply  <game_dir>
+    python raf_patch.py apply  <game_dir> [--fullscreen]
     python raf_patch.py revert <game_dir>
     python raf_patch.py status <game_dir>
 
+apply defaults to borderless fullscreen at the desktop resolution; --fullscreen keeps
+the original exclusive fullscreen (also at the desktop resolution).
+
 Everything is idempotent. Originals are kept in <game_dir>/.raf-remaster/orig
-so `revert` restores the install byte for byte.
+so `revert` restores the install byte for byte. Registry values the patcher sets
+are saved in <game_dir>/.raf-remaster/registry.json and restored by `revert`.
 """
 
+import ctypes
+import ctypes.wintypes as wt
 import hashlib
 import json
 import shutil
@@ -42,7 +48,7 @@ start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" %*
 # Files the patcher creates from scratch; revert deletes them.
 CREATED = ["d3d9.dll", "dxvk.conf", "RiseAndFall Remaster.bat"]
 # Files the patcher modifies; revert restores them from orig/.
-MODIFIED = [EXE]
+MODIFIED = [EXE, "DX9Rasterizer.dll"]
 # Intro movies; the launcher's own install ships without the last four, so the game runs without them.
 # apply moves them into orig/, revert moves them back.
 REMOVED = [
@@ -54,6 +60,21 @@ REMOVED = [
 ]
 
 LAA_FLAG = 0x20
+
+REG_KEY = r"Software\Midway Home Entertainment\Rise and Fall"
+
+# Byte patches: (file, virtual address, original bytes, patched bytes, what it does).
+# Addresses are for the v1.15 (08.18.2006) files; every patch checks the original bytes first.
+BORDERLESS = [
+    # DX9Screen::Capture, fullscreen branch: D3DPRESENT_PARAMETERS.Windowed = ebp (0) -> eax (the
+    # HWND returned just before, never 0). The swapchain becomes windowed on the game's WS_POPUP
+    # window, which already covers the monitor: borderless fullscreen.
+    ("DX9Rasterizer.dll", 0x100326BF, "89ae98000000", "898698000000", "Windowed = TRUE"),
+    # same branch: FullScreen_RefreshRateInHz = mode refresh -> ebp (0); windowed swapchains need 0.
+    ("DX9Rasterizer.dll", 0x10032701, "898ea8000000", "89aea8000000", "refresh rate = 0"),
+    # DX9Screen::CreateAWindow: fullscreen window ex-style WS_EX_TOPMOST -> 0 so alt-tab works.
+    ("DX9Rasterizer.dll", 0x100318D3, "6a08", "6a00", "no WS_EX_TOPMOST"),
+]
 
 
 def sha256(path: Path) -> str:
@@ -103,12 +124,103 @@ def dxvk_d3d9() -> Path:
     return dll
 
 
+def pe_va_to_offset(data: bytes, va: int) -> int:
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    nsec = struct.unpack_from("<H", data, pe + 6)[0]
+    opt = struct.unpack_from("<H", data, pe + 20)[0]
+    base = struct.unpack_from("<I", data, pe + 24 + 28)[0]
+    sec = pe + 24 + opt
+    for i in range(nsec):
+        _vsize, vaddr, rsize, raw = struct.unpack_from("<IIII", data, sec + 40 * i + 8)
+        if base + vaddr <= va < base + vaddr + rsize:
+            return va - base - vaddr + raw
+    raise ValueError(f"VA {va:#x} not in file")
+
+
+def byte_patches(game: Path, patches, enable: bool, label: str) -> None:
+    """Apply (enable) or undo (not enable) byte patches; refuses to touch unexpected bytes."""
+    by_file = {}
+    for name, va, old, new, note in patches:
+        by_file.setdefault(name, []).append((va, bytes.fromhex(old), bytes.fromhex(new), note))
+    for name, items in by_file.items():
+        path = game / name
+        data = bytearray(path.read_bytes())
+        changed = False
+        for va, old, new, note in items:
+            off = pe_va_to_offset(data, va)
+            want, other = (new, old) if enable else (old, new)
+            cur = bytes(data[off : off + len(old)])
+            if cur == want:
+                continue
+            if cur != other:
+                sys.exit(f"{name} {va:#x}: unexpected bytes {cur.hex()} ({note}); is this v1.15?")
+            data[off : off + len(old)] = want
+            changed = True
+        if changed:
+            path.write_bytes(data)
+    print(f"{label}: {'on' if enable else 'off'}")
+
+
+def desktop_mode() -> tuple[int, int, int]:
+    """Current width, height and refresh rate of the primary display."""
+
+    class DEVMODEW(ctypes.Structure):
+        _fields_ = [("name", wt.WCHAR * 32), ("ver", wt.WORD * 4), ("fields", wt.DWORD),
+                    ("pos", wt.LONG * 2), ("orient", wt.DWORD * 2), ("misc", ctypes.c_short * 5),
+                    ("form", wt.WCHAR * 32), ("logpix", wt.WORD), ("bpp", wt.DWORD),
+                    ("w", wt.DWORD), ("h", wt.DWORD), ("flags", wt.DWORD), ("hz", wt.DWORD)]
+
+    ctypes.windll.user32.SetProcessDPIAware()
+    dm = DEVMODEW()
+    dm.ver[2] = ctypes.sizeof(DEVMODEW)
+    if not ctypes.windll.user32.EnumDisplaySettingsW(None, -1, ctypes.byref(dm)):
+        raise RuntimeError("EnumDisplaySettings failed")
+    return dm.w, dm.h, dm.hz
+
+
+def set_registry(game: Path, values: dict) -> None:
+    """Set DWORD values under REG_KEY, saving the values found before the first apply."""
+    import winreg
+
+    saved_path = game / STATE_DIR / "registry.json"
+    saved = json.loads(saved_path.read_text()) if saved_path.exists() else {}
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REG_KEY) as key:
+        for name, value in values.items():
+            if name not in saved:
+                try:
+                    saved[name] = winreg.QueryValueEx(key, name)[0]
+                except FileNotFoundError:
+                    saved[name] = None
+            winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, value)
+    saved_path.write_text(json.dumps(saved, indent=2))
+    print("registry: " + ", ".join(f"{k}={v}" for k, v in values.items()))
+
+
+def restore_registry(game: Path) -> None:
+    import winreg
+
+    saved_path = game / STATE_DIR / "registry.json"
+    if not saved_path.exists():
+        return
+    saved = json.loads(saved_path.read_text())
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REG_KEY) as key:
+        for name, value in saved.items():
+            if value is None:
+                try:
+                    winreg.DeleteValue(key, name)
+                except FileNotFoundError:
+                    pass
+            else:
+                winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, value)
+    print("registry: restored " + ", ".join(saved))
+
+
 def check_game_dir(game: Path) -> None:
     if not (game / EXE).is_file():
         sys.exit(f"{EXE} not found in {game}")
 
 
-def apply(game: Path) -> None:
+def apply(game: Path, borderless: bool = True) -> None:
     orig = game / STATE_DIR / "orig"
     orig.mkdir(parents=True, exist_ok=True)
     for name in MODIFIED:
@@ -135,11 +247,21 @@ def apply(game: Path) -> None:
             shutil.move(game / name, orig / name)
     print("intro movies: removed")
 
-    state = {"dxvk": DXVK_VERSION, "laa": True}
+    byte_patches(game, BORDERLESS, borderless, "borderless window")
+
+    # Full Screen Mode stays 1: the game's own windowed mode hangs on a white window.
+    # The game drops a resolution missing from the adapter's mode list back to 1024x768
+    # (and autodetect can write 800x600), so we always write the current desktop mode.
+    w, h, hz = desktop_mode()
+    set_registry(game, {"Full Screen Mode": 1, "Game Window Width": w, "Game Window Height": h,
+                        "Custom Refresh Rate": hz})
+
+    state = {"dxvk": DXVK_VERSION, "laa": True, "borderless": borderless, "mode": [w, h, hz]}
     (game / STATE_DIR / "state.json").write_text(json.dumps(state, indent=2))
 
 
 def revert(game: Path) -> None:
+    restore_registry(game)
     orig = game / STATE_DIR / "orig"
     for name in MODIFIED:
         if (orig / name).exists():
@@ -165,11 +287,16 @@ def status(game: Path) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 3 or sys.argv[1] not in ("apply", "revert", "status"):
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    if len(args) != 2 or args[0] not in ("apply", "revert", "status") or flags - {"--fullscreen"}:
         sys.exit(__doc__)
-    game = Path(sys.argv[2])
+    game = Path(args[1])
     check_game_dir(game)
-    {"apply": apply, "revert": revert, "status": status}[sys.argv[1]](game)
+    if args[0] == "apply":
+        apply(game, borderless="--fullscreen" not in flags)
+    else:
+        {"revert": revert, "status": status}[args[0]](game)
 
 
 if __name__ == "__main__":
