@@ -70,8 +70,8 @@ I looked (AI, DB loaders, unit setup), so the protection does not hide the parts
   `EECPBuildManager`, `EECPResearchManager`, `EECPCombatManager`, `EECPAttackCommander`,
   `EECPDefenseCommander`, `EECPResourceManager`, `EECPExplorationManager`, `EECPDiplomacyManager`,
   `EECPWallManager`, `EECPSpecialPowersManager` ...). There is no build-order script. Every tunable
-  number comes from `db\dbcpbehavior.dat` (section 3.4); `db\dbcivspecai.dat` can override single
-  records per civ, but the main setup ignores it and the stock overrides are neutral (3.3). `dbaiunittargeting.dat` (Melee / Short Range /
+  number comes from `db\dbcpbehavior.dat` (section 3.4); `db\dbcivspecai.dat` can scale single
+  records per civ (stock overrides are neutral, see 3.3 and `docs/ai-personalities.md`). `dbaiunittargeting.dat` (Melee / Short Range /
   Long Range) and `dbunitbehavior.dat` (Scout, Stand Ground, Guard, Harass, Cautious, Aggressive ...)
   hold unit-level AI settings. Not in `Default.dll`, `LowLevelEngine.dll` or any text file
   (searched for the parameter names: only the exe has them).
@@ -188,12 +188,14 @@ named ones (they come from a physics sub-object and a virtual getter); open.
 Root node layout = child layout; the root is preceded by its child count.
 
 **dbcivspecai (196 bytes)**: 0x6c `behavior_id` = which `dbcpbehavior` record it overrides; 0x70..0xac
-eight (multiplier, value) float pairs indexed by civ slot of `dbphoenixcivtable` (Greece, Persia,
-Rome, Egypt, placeholders; `FUN_005f72b0`). A value of -1 means "use multiplier", multiplier 1 means
-no change. The main AI setup `FUN_004701a0` is always called with slot 0 (two call sites),
-and slot 0 is never filled, so for the ~190 parameters it sets up the table has no effect. At least
-one later site uses the player's real civ (`FUN_0047d3a0`, record 17 CitizenTargetCountMaximum), so
-per-civ overrides are not dead everywhere. The two stock records (behavior_id -1 and 44) are
+eight (multiplier, value) float pairs for Greece, Persia, Rome, Egypt and placeholders, loaded by
+`FUN_005f72b0` into civ slots 3, 4, 5, 10 (and 6-9, 11); slots 0-2 are never filled. Combine
+(`FUN_0046bd20` float, `FUN_00468130` int): value -1 -> base * multiplier, else the value replaces the
+base; one pair scales every field of that id (Easy/Medium/Hard alike). `FUN_004701a0` is called with
+slot 0 from the constructor and from the save/network read, but with the real civ from the computer
+player's set-civilization virtual method (0x472310) when `DAT_0101e255 == 0`, so overrides are live
+for the ~100 parameters set up there. Full write-up, the personalities built on it and the
+in-game tests: `docs/ai-personalities.md`. The two stock records (behavior_id -1 and 44) are
 neutral (all multipliers 1, all values -1).
 
 ### 3.4 dbcpbehavior.dat: the skirmish AI parameters
