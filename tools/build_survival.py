@@ -424,7 +424,8 @@ def enemy_types(theme, vocab):
     return sorted(types)
 
 
-def build_mode(m, theme, vocab, opts, map_size):
+def build_mode(m, theme, vocab, opts, map_size, extra=None):
+    """extra(b, ctx): optional layer added before finish (tools/build_coop.py, Co-op Roles)."""
     b = Builder(m)
     waves = theme['waves']
     times = wave_times(theme)
@@ -595,6 +596,8 @@ def build_mode(m, theme, vocab, opts, map_size):
               [(b.chat(T['lose'], 30), 0),
                (b.eff((2, 2), 'SV Defeat humans', player=PLAYER_ALL_HUMANS), 300)],
               true_for=3)
+    if extra:
+        extra(b, dict(vocab=vocab, sets=sets, o_human_tc=o_human_tc, times=times))
     b.finish()
     return plan
 

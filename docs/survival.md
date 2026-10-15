@@ -241,6 +241,9 @@ failure line says what it means.
 * Two or more computers multiply every wave (each gets a copy).
 * Texts are English; the lobby name/help comes from the .rmv `DisplayHelp` (unverified).
 
+More co-op maps built on the same trigger layer (Endless, Boss Hunt, Roles, vs Hard AI):
+`docs/coop-modes.md`.
+
 ## 7. Files
 
 `tools/raf_scn.py` (format), `tools/build_survival.py` (generator, themes), `tools/check_survival.py`
