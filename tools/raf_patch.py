@@ -139,6 +139,23 @@ MODE_LIST_FIX = [
     (EXE, 0x0072013C, "741d", "eb1d", "no video memory test for display modes"),
 ]
 
+# Feature `click-fix`: clicks do nothing after launch until the game is deactivated and
+# reactivated once. The intro function (FUN_00719080) ends with ISMouse/ISKeyboard::Suspend; the
+# main loop (FUN_00baa8e0) calls Resume once, which only clears the "suspended" byte (+8) when the
+# DirectInput Acquire is granted (DISCL_FOREGROUND: game window must be foreground). The per-frame
+# input function FUN_00ba73e0 skips the mouse while +8 != 0 and nothing but a new WM_ACTIVATE /
+# WM_ACTIVATEAPP (FUN_00ba5610) calls Resume again. The cave retries Resume on a suspended mouse
+# and keyboard every frame; DirectInput refuses it while the game is in the background, so that
+# case behaves as before. Input only, no simulation or network path. Generated and tested offline by
+# tools/test_click_fix.py (cave in the zero .RDATA tail 0xCE3880..0xCE38AD, below zoom-setting).
+CLICK_FIX = [
+    (EXE, 0x00CE3880, "00" * 45,
+     "a19cacc4008b088079080074058b11ff5210a198b4c4008b08807908000f84673becff8b11ff5210e9703becff",
+     "click fix cave (45 bytes)"),
+    (EXE, 0x00BA73FD, "a198b4c4008b08807908007513", "e97ec413009090909090909090",
+     "input loop: Resume a suspended mouse/keyboard"),
+]
+
 # Addresses are for the v1.15 (08.18.2006) files; every patch checks the original bytes first.
 BORDERLESS = [
     # DX9Screen::Capture, fullscreen branch: D3DPRESENT_PARAMETERS.Windowed = ebp (0) -> eax (the
@@ -567,6 +584,7 @@ FEATURES = {
     "lang-en": False,
     "credits": True,
     "openspy": False,
+    "click-fix": False,  # Resume a suspended mouse/keyboard each frame; off until tested in game
 }
 # The autodetect does not know the GPU and leaves every quality at 0 ("Низко"); 3 = "Ультра".
 # The shader upgrade only shows with the higher techniques.
@@ -777,6 +795,7 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     byte_patches(game, OPENSPY, "openspy" in feats, "openspy")
     byte_patches(game, AI_CIV_GATE, "ai-personalities" in feats, "ai civ gate")
     byte_patches(game, BORDERLESS, borderless, "borderless")
+    byte_patches(game, CLICK_FIX, "click-fix" in feats, "click-fix")
     byte_patches(game, SMOOTH_SCROLL, "smooth-scroll" in feats, "smooth-scroll")
     byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0 (old)")
     zoom_given = zoom is not None
