@@ -9,7 +9,7 @@ touches the game folder, the registry or a running game.
 2. Language.dll (ru stock, en lang-en overlay when built): menu line + credits roll added, nothing
    else changed, LoadStringW and LoadStringA (cp1251) read the line back, roll link escaped
 3. loading screen: stock picture unchanged on top, bar below, deterministic
-4. patcher build_credits with and without menu-credit (temp WORK), feature default off,
+4. patcher build_credits with and without menu-credit (temp WORK), feature default on,
    files outside the gameplay fingerprint, expected fingerprint unchanged
 """
 import contextlib
@@ -251,7 +251,7 @@ def loadscreen_checks(tmp: Path):
 
 # ---------------------------------------------------------------- 4. patcher
 def patcher_checks(tmp: Path):
-    check("menu-credit registered, default off", rp.FEATURES.get("menu-credit") is False)
+    check("menu-credit registered, default on", rp.FEATURES.get("menu-credit") is True)
     check("credits overlay files outside the gameplay fingerprint",
           not any(p.lower().startswith(d.lower() + "/") for p in (rc.MENU_XML, "Language.dll", "loadscreen.bmp")
                   for d in rp.GAMEPLAY_DIRS))
