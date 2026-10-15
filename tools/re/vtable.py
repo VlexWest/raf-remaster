@@ -1,6 +1,5 @@
 """vtable.py <pe> <mangled class name e.g. .?AVEEUIEWheelZoom@@> : find RTTI vftable(s) and list first entries."""
 import sys, struct, re
-sys.path.insert(0, 'work/scripts')
 from xref import load, off2va, va2off
 d, b, s = load(sys.argv[1]); name = sys.argv[2].encode()
 for m in re.finditer(re.escape(name) + b'\0', d):

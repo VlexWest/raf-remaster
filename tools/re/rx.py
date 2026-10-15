@@ -1,5 +1,5 @@
-import sys,struct
-sys.path.insert(0,r'work\tools\py')
+import os, sys,struct
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'work', 'tools', 'py'))
 import pefile,capstone
 PATH=r'D:\Games\Rise and Fall\RiseAndFall.exe'
 pe=pefile.PE(PATH,fast_load=True)

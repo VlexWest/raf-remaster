@@ -1,6 +1,5 @@
 """stackwait.py <pid> <tid> [samples] : sample a thread's stack, histogram of the first return addresses into game modules."""
 import ctypes, sys, time, collections
-sys.path.insert(0, 'work/scripts')
 import eipsample_lib as E
 import memscan
 pid = int(sys.argv[1]); tid = int(sys.argv[2]); N = int(sys.argv[3]) if len(sys.argv) > 3 else 300

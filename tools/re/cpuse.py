@@ -1,5 +1,7 @@
+import os
+D = os.path.join(os.environ.get('RAF_DECOMP') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'decomp'), '')
 import re,json,collections
-C=open(r'decomp\RiseAndFall.c',encoding='latin1').read().splitlines()
+C=open(D + r'RiseAndFall.c',encoding='latin1').read().splitlines()
 B=0xd2cd00
 use=collections.defaultdict(set); fn=None
 for l in C:
@@ -10,9 +12,9 @@ for l in C:
             r=(a-B)//0x38; f=((a-B)%0x38)//4
             use[r].add((f,fn))
 named=collections.defaultdict(list)
-for r,f,off,name,how in json.load(open(r'decomp\ai_param_map.json')):
+for r,f,off,name,how in json.load(open(D + r'ai_param_map.json')):
     named[r].append((f,name,how))
-json.dump({'named':named,'use':{k:sorted(v) for k,v in use.items()}},open(r'decomp\cp_usage.json','w'))
+json.dump({'named':named,'use':{k:sorted(v) for k,v in use.items()}},open(D + r'cp_usage.json','w'))
 for r in range(143):
     if r not in named:
         print(r, sorted(use.get(r,[]))[:6])

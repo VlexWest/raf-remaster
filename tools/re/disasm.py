@@ -1,7 +1,6 @@
 """dis.py <pe> <start_va> <end_va> : disassemble a VA range (x86-32)."""
-import sys
-sys.path.insert(0,'work/tools/py'); sys.path.insert(0,'work/scripts')
-import capstone
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'work', 'tools', 'py')); import capstone
 from xref import load, va2off
 d,b,s=load(sys.argv[1]); a=int(sys.argv[2],16); e=int(sys.argv[3],16)
 o=va2off(s,b,a)

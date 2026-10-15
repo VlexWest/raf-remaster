@@ -258,8 +258,23 @@ def pyinstaller(external):
 
 # ---------------------------------------------------------------- scan
 
-PERSONAL = [
-            rb"Games\RAF-remaster", b"Games/RAF-remaster", b"raf-inst-scratch"]
+# Generic leak patterns. Machine-specific ones (your user folder, source path, e-mail) go one per
+# line into work/personal-patterns.txt (gitignored) or the file named by RAF_SCAN_PATTERNS.
+PERSONAL = [rb"Games\RAF-remaster", b"Games/RAF-remaster", b"raf-inst-scratch"]
+PERSONAL_FILE = Path(os.environ.get("RAF_SCAN_PATTERNS", str(REPO / "work" / "personal-patterns.txt")))
+
+
+def personal_patterns() -> list:
+    pats = list(PERSONAL)
+    if PERSONAL_FILE.is_file():
+        for line in PERSONAL_FILE.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                pats.append(line.encode("utf-8"))
+    else:
+        print(f"scan: no {PERSONAL_FILE}, checking generic patterns only")
+    email = os.environ.get("RAF_SCAN_EMAIL", "").encode()
+    return pats + ([email] if email else [])
 USERS = re.compile(rb"(?i)[a-z]:[\\/]users[\\/]([a-z0-9_.-]+)")
 
 
@@ -303,7 +318,8 @@ def scan(exe: Path, stock: Path) -> bool:
             if f.is_file() and f.stat().st_size > 0:
                 ref.setdefault(fsha(f), str(f))
     print(f"scan: {len(ref)} reference hashes from {len(roots)} folders")
-    email = os.environ.get("RAF_SCAN_EMAIL", "").encode()
+    patterns = personal_patterns()
+    print(f"scan: {len(patterns)} leak patterns")
     hits, n, total, users = [], 0, 0, set()
     for name, data in exe_entries(exe):
         n += 1
@@ -312,7 +328,7 @@ def scan(exe: Path, stock: Path) -> bool:
         h = sha(data)
         if h in ref:
             hits.append(f"{name}: identical to {ref[h]}")
-        for pat in PERSONAL + ([email] if email else []):
+        for pat in patterns:
             if pat.lower() in data.lower():
                 hits.append(f"{name}: contains {pat!r}")
     # the bundle folder itself (plain files) too
@@ -321,7 +337,7 @@ def scan(exe: Path, stock: Path) -> bool:
             data = f.read_bytes()
             if fsha(f) in ref:
                 hits.append(f"bundle/{f.relative_to(BUNDLE)}: identical to {ref[fsha(f)]}")
-            for pat in PERSONAL + ([email] if email else []):
+            for pat in patterns:
                 if pat.lower() in data.lower():
                     hits.append(f"bundle/{f.relative_to(BUNDLE)}: contains {pat!r}")
     print(f"scan: {n} entries, {total / 1e6:.1f} MB uncompressed; user folders named inside (third-party "

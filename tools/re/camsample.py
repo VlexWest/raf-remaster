@@ -1,7 +1,6 @@
 """camsample.py <pid> [seconds] [addr] : sample the camera position (GEViewport 0xd2f748 + 0x1f0 + 0x30) at ~2 kHz;
 report how often it changes. Run while the camera scrolls."""
 import sys, time, struct
-sys.path.insert(0, 'work/scripts')
 import memscan
 pid = int(sys.argv[1]); T = float(sys.argv[2]) if len(sys.argv) > 2 else 2.0
 addr = int(sys.argv[3], 16) if len(sys.argv) > 3 else 0xd2f968

@@ -1,6 +1,6 @@
 """xref.py <pe> <ascii string>... : print string VAs and every code location holding that VA as imm32."""
-import sys, struct, re
-sys.path.insert(0, 'work/tools/py')
+import os, sys, struct, re
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'work', 'tools', 'py'))
 def load(p):
     d=open(p,'rb').read()
     pe=struct.unpack_from('<I',d,0x3c)[0]

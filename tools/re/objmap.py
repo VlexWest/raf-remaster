@@ -1,5 +1,7 @@
+import os
+D = os.path.join(os.environ.get('RAF_DECOMP') or os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'decomp'), '')
 import re,json
-C=open(r'decomp\RiseAndFall.c',encoding='latin1').read().splitlines()
+C=open(D + r'RiseAndFall.c',encoding='latin1').read().splitlines()
 def body(addr):
     s=next(i for i,l in enumerate(C) if l.startswith('// ==== '+addr)); e=s+1
     while not C[e].startswith('// ==== '): e+=1
@@ -31,6 +33,6 @@ for l in body('00a1dd00'):
     mp.append((src,typ,dst,oos.get(dst,''),tr))
 seen={}
 for r in mp: seen.setdefault(r[0],r)
-json.dump({'oos':oos,'map':sorted(seen.values())},open(r'decomp\dbobjects_map.json','w'),indent=0)
+json.dump({'oos':oos,'map':sorted(seen.values())},open(D + r'dbobjects_map.json','w'),indent=0)
 print(len(oos),len(seen))
 for r in sorted(seen.values()): print(hex(r[0]),r[1],hex(r[2]),r[3],r[4])

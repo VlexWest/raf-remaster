@@ -1,6 +1,6 @@
 """cpbprobe.py <pid> [ids] : read dbcpbehavior records from the global array 0x00d2cd00 + id*0x38 (v4 i32, v7 i32, v12 f32)."""
 import sys, struct
-sys.path.insert(0, 'work/scripts'); import memscan
+import memscan
 h = memscan.openp(int(sys.argv[1]))
 ids = [int(x) for x in (sys.argv[2].split(',') if len(sys.argv) > 2 else '1,2,6,7,11,28,29,88,97,98,114'.split(','))]
 for i in ids:

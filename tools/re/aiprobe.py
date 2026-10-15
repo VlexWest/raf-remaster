@@ -1,6 +1,6 @@
 """aiprobe.py <pid> : dump per-player AI values (docs/ai-personalities.md section 5)."""
 import sys, struct
-sys.path.insert(0, 'work/scripts'); import memscan
+import memscan
 h = memscan.openp(int(sys.argv[1]))
 rd = lambda a, n=4: memscan.read(h, a, n)
 u32 = lambda a: struct.unpack('<I', rd(a))[0]

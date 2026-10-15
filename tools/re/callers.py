@@ -1,6 +1,5 @@
 """callers.py <pe> <target_va>... : find E8 rel32 calls and imm32 refs to each target."""
 import sys, struct, re
-sys.path.insert(0, 'work/scripts')
 from xref import load, off2va
 d, b, s = load(sys.argv[1])
 for t in sys.argv[2:]:

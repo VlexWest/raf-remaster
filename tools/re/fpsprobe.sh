@@ -1,13 +1,14 @@
 #!/bin/bash
 # fpsprobe.sh <name> [mode] : focus game, sweep cursor (mode=cursor) or hold Right arrow (mode=scroll), capture 2 s, count distinct frames
-S=work/shots
+HERE=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$HERE/../.." && pwd)
+S=${RAF_SHOTS:-$REPO/work/shots}; mkdir -p "$S"; GAME=${RAF_GAME:-D:/Games/RAF-remaster}
 MODE=${2:-cursor}
-export PYTHONUTF8=1; UM=um
+export PYTHONUTF8=1; UM=${UM:-um}
 if [ $MODE = scroll ]; then
   timeout 40 $UM win drive --proc RiseAndFall focus "click 1720 120" "hold ${KEY:-0x27} 3500" fg >$S/drive.log 2>&1 &
 else
   timeout 40 $UM win drive --proc RiseAndFall focus "click 1720 120" fg >$S/drive.log 2>&1
-  python work/scripts/cursor_motion.py 3.5 &
+  python $HERE/cursor_motion.py 3.5 &
 fi
 sleep 1.2
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "gfxcapture=window_exe=RiseAndFall.exe:capture_cursor=0:max_framerate=240,hwdownload,format=bgra,crop=1600:900:920:150,scale=400:225" -t 2 -c:v ffv1 $S/$1.mkv
