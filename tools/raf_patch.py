@@ -883,7 +883,8 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     if "zoom-setting" not in feats:
         release.append("Remaster Camera Zoom")
     if "ultra" in feats:
-        reg.update(ULTRA)
+        # first apply only: graphics options the player changes in game (flora, quality) stay
+        defaults.update(ULTRA)
     else:
         release += list(ULTRA)
     keep = ([n for n in reg if n != "Network Adapter"] + list(defaults)) if keep_settings else ()
