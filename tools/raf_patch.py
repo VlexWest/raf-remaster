@@ -17,7 +17,7 @@ Features (see FEATURES; `features` prints them with their default):
                                        --zoom then sets the registry default "Remaster Camera Zoom"
   mips, hd-terrain, hd-units           texture overlays (hd wins over mips on shared files)
   shaders                              fx overlay (shader.cache is moved aside so the game rebuilds it)
-  ai-hard, ai-personalities, unit-ai, maps, survival
+  ai-hard, ai-personalities, unit-ai, maps, survival, coop-modes
                                        gameplay data (all players need the same set: REMASTER.txt)
   lang-en                              English language pack (needs work/lang/en.json, not in the repo)
 --mutator <name> installs work/overlay-mutators/<name> last (one at a time, gameplay data);
@@ -516,6 +516,9 @@ OVERLAYS = {
     # diagnostic map "(4) Survival Probe" (docs/survival.md 5a); test only
     "survival-probe": Overlay("survival-probe", WORK / "overlay-survival-probe",
                               lambda st: [PY, "tools/build_survival.py", st, WORK / "overlay-survival-probe", "--probe"]),
+    # co-op modes: Survival Endless, Boss Hunt, Co-op Roles (+ vs AI), Co-op vs Hard AI (docs/coop-modes.md)
+    "coop-modes": Overlay("coop-modes", WORK / "overlay-coop",
+                          lambda st: [PY, "tools/build_coop.py", st, WORK / "overlay-coop"]),
     # generated at apply time by raf_credits.py from the Language.dll / loadscreen.bmp that would
     # otherwise be installed; keep it after lang-en so it patches whichever Language.dll is used
     "credits": Overlay("credits", WORK / "overlay-credits", None,
@@ -560,6 +563,7 @@ FEATURES = {
     "maps": False,
     "survival": True,
     "survival-probe": False,
+    "coop-modes": False,  # five co-op maps; off until tested in game (docs/coop-modes.md)
     "lang-en": False,
     "credits": True,
     "openspy": False,
