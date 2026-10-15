@@ -2,7 +2,7 @@
 
 Usage:
     python raf_patch.py apply  <game_dir> [--only a,b] [--skip a,b] [--mutator name|none]
-                               [--stock <dir>] [--rebuild]
+                               [--zoom 1.0-2.5] [--stock <dir>] [--rebuild]
     python raf_patch.py revert <game_dir>
     python raf_patch.py status <game_dir>
     python raf_patch.py features
@@ -153,11 +153,41 @@ SMOOTH_SCROLL = [
 # preset base distance (FUN_006cf720) goes from -6.7 to -10.05: every zoom step and the maximum
 # are 1.5x farther at the same angles. The ZoomStyle 0 distance clamp -13.2 (FUN_006d32c0) would
 # cut that (max is now about -13.5), so it moves to -19.8.
-ZOOM_OUT = [
-    (EXE, 0x006CF731, "bb6666d6c0", "bbcdcc20c1", "RTS camera base distance -6.7 -> -10.05"),
-    (EXE, 0x00C5FB50, "333353c1", "66669ec1", "ZoomStyle 0 distance clamp -13.2 -> -19.8 (compare)"),
-    (EXE, 0x006D34CA, "b8333353c1", "b866669ec1", "ZoomStyle 0 distance clamp -13.2 -> -19.8 (value)"),
-]
+DEFAULT_ZOOM = 2.5  # 1.5/2.0/2.5 checked on an 8-player map: clean edges, units render, ~340 fps
+
+
+def zoom_patches(factor: float):
+    """Camera base distance -6.7 x factor, ZoomStyle-0 distance clamp -13.2 x factor."""
+    f = lambda v: struct.pack("<f", v).hex()
+    return [
+        (EXE, 0x006CF731, "bb6666d6c0", "bb" + f(-6.7 * factor), f"RTS camera base distance x{factor}"),
+        (EXE, 0x00C5FB50, "333353c1", f(-13.2 * factor), "ZoomStyle 0 distance clamp (compare)"),
+        (EXE, 0x006D34CA, "b8333353c1", "b8" + f(-13.2 * factor), "ZoomStyle 0 distance clamp (value)"),
+    ]
+
+
+def unzoom(game: Path) -> None:
+    """Put the three zoom sites back to stock whatever factor they carry (factor 0.5..4 accepted)."""
+    data = bytearray((game / EXE).read_bytes())
+    for (_, va, old, _n, _), base in zip(zoom_patches(1.0), (-6.7, -13.2, -13.2)):
+        off = pe_va_to_offset(data, va)
+        raw = bytes.fromhex(old)
+        cur = bytes(data[off:off + len(raw)])
+        op = raw[:len(raw) - 4]
+        val = struct.unpack("<f", cur[len(op):])[0]
+        if cur[:len(op)] != op or not (base * 4.01 <= val <= base * 0.49):
+            sys.exit(f"zoom site {va:#x}: unexpected bytes {cur.hex()}; is this v1.15?")
+        data[off:off + len(raw)] = raw
+    (game / EXE).write_bytes(data)
+
+
+def menu_aspect_patch(w: int, h: int):
+    return [(EXE, MENU_ASPECT_VA, MENU_ASPECT_OLD, "68" + struct.pack("<f", w / h).hex(), "menu 3D aspect")]
+
+
+# Menu 3D background aspect experiment (see apply); stock bytes: push 1.3333334
+MENU_ASPECT_VA, MENU_ASPECT_OLD = 0x00B30859, "68abaaaa3f"
+
 # Old wheel/hotkey clamp patches (zoom up to 1.5): byte_patches() undoes them on installs that had them.
 ZOOM_PAST_ONE = [
     (EXE, 0x009288A7, "d81decd1c400", "d81d34d4c400", "wheel: compare zoom with 1.5"),
@@ -440,13 +470,13 @@ FEATURES = {
     "smooth-scroll": True,
     "zoom": True,
     "ultra": True,
-    "mips": False,
-    "hd-terrain": False,
-    "hd-units": False,
-    "shaders": False,
-    "ai-hard": False,
+    "mips": True,
+    "hd-terrain": True,
+    "hd-units": True,
+    "shaders": True,
+    "ai-hard": True,
     "ai-personalities": False,
-    "unit-ai": False,
+    "unit-ai": True,
     "maps": False,
     "survival": False,
     "lang-en": False,
@@ -565,7 +595,7 @@ def choose_features(state: dict, only, skip) -> list:
     return [f for f in FEATURES if f in base and f not in (skip or [])]
 
 
-def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=None) -> None:
+def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=None, zoom=None) -> None:
     orig = game / STATE_DIR / "orig"
     orig.mkdir(parents=True, exist_ok=True)
     state = load_state(game)
@@ -606,7 +636,16 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     byte_patches(game, BORDERLESS, borderless, "borderless")
     byte_patches(game, SMOOTH_SCROLL, "smooth-scroll" in feats, "smooth-scroll")
     byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0 (old)")
-    byte_patches(game, ZOOM_OUT, "zoom" in feats, "zoom")
+    zoom = float(state.get("zoom", DEFAULT_ZOOM) if zoom is None else zoom)
+    unzoom(game)
+    byte_patches(game, zoom_patches(zoom), "zoom" in feats, f"zoom x{zoom}")
+    # menu-aspect experiment (0xb30859 4:3 -> w/h) un-stretched the menu 3D scene but the menu
+    # frame and logo vanished; only undo it on installs that still carry it.
+    exe_data = (game / EXE).read_bytes()
+    off = pe_va_to_offset(exe_data, MENU_ASPECT_VA)
+    cur = exe_data[off:off + 5].hex()
+    if cur != MENU_ASPECT_OLD and cur.startswith("68"):
+        byte_patches(game, [(EXE, MENU_ASPECT_VA, MENU_ASPECT_OLD, cur, "menu 3D aspect")], False, "menu-aspect (old)")
 
     had_shaders = "shaders" in state.get("features", [])
     sync_overlays(game, feats, stock, rebuild, state)
@@ -624,7 +663,7 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     if "zoom" in feats:
         # far clip = this/100 x 43.3; 60 (the autodetected minimum) cuts the far terrain at the
         # new zoom distance; 160 gives 69 units.
-        reg["RearClipPlaneModifier"] = 160
+        reg["RearClipPlaneModifier"] = int(round(160 * zoom / 1.5))
     else:
         release.append("RearClipPlaneModifier")
     if "ultra" in feats:
@@ -645,7 +684,7 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     print(f"REMASTER.txt + start scripts: written (fingerprint {fp})")
 
     state.update({"version": REMASTER_VERSION, "dxvk": DXVK_VERSION, "laa": True, "features": feats,
-                  "mode": [w, h, hz], "stock": str(stock), "fingerprint": fp})
+                  "mode": [w, h, hz], "stock": str(stock), "fingerprint": fp, "zoom": zoom})
     state.pop("borderless", None)
     (game / STATE_DIR / "state.json").write_text(json.dumps(state, indent=2))
 
@@ -692,7 +731,7 @@ def main() -> None:
     argv, opts, args = sys.argv[1:], {}, []
     while argv:
         a = argv.pop(0)
-        if a in ("--only", "--skip", "--stock", "--mutator"):
+        if a in ("--only", "--skip", "--stock", "--mutator", "--zoom"):
             if not argv:
                 sys.exit(__doc__)
             opts[a] = argv.pop(0)
@@ -714,7 +753,8 @@ def main() -> None:
         def split(v):
             return None if v is None else [x.strip() for x in v.split(",") if x.strip()]
         apply(game, only=split(opts.get("--only")), skip=split(opts.get("--skip")),
-              stock=opts.get("--stock"), rebuild=bool(opts.get("--rebuild")), mutator=opts.get("--mutator"))
+              stock=opts.get("--stock"), rebuild=bool(opts.get("--rebuild")), mutator=opts.get("--mutator"),
+              zoom=float(opts["--zoom"]) if "--zoom" in opts else None)
     else:
         {"revert": revert, "status": status}[args[0]](game)
 
