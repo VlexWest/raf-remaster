@@ -711,8 +711,9 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
 
     fp = fingerprint(game)
     (game / "REMASTER.txt").write_text(
-        f"Rise and Fall Remaster {REMASTER_VERSION}\r\n"
-        f"Features: {', '.join(feats) or '-'}\r\n"
+        f"Rise and Fall Remaster {REMASTER_VERSION} by Alexander West - thewest.cc/raf\r\n"
+        f"Features: {', '.join(feats) or '-'}"
+        f"{'; mutator ' + state['mutator'] if state.get('mutator') else ''}\r\n"
         f"Gameplay fingerprint: {fp}\r\n"
         "All players of a network game need the same fingerprint.\r\n", encoding="ascii")
     for fname, text in (("RiseAndFall Remaster.bat", LAUNCH_BAT), ("Host.bat", HOST_BAT),
