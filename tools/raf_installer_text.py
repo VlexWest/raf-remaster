@@ -64,11 +64,14 @@ TEXT = {
         "en": "This is already a remaster install. Please choose the original game folder."},
     "chk_bad_version": {
         "de": "{name} passt nicht zur unterstützten Version. Unterstützt wird nur Rise and Fall {gv} "
-              "(russisch) ohne weitere Patches oder Mods.",
+              "(russisch) ohne weitere Patches oder Mods. Andere Version? Bitte melde sie auf "
+              "github.com/VlexWest/raf-remaster/issues.",
         "ru": "{name} не соответствует поддерживаемой версии. Поддерживается только Rise and Fall {gv} "
-              "(русская версия) без других патчей и модов.",
+              "(русская версия) без других патчей и модов. Другая версия? Напишите о ней на "
+              "github.com/VlexWest/raf-remaster/issues.",
         "en": "{name} does not match the supported version. Only Rise and Fall {gv} (Russian) without other "
-              "patches or mods is supported."},
+              "patches or mods is supported. Another version? Please report it at "
+              "github.com/VlexWest/raf-remaster/issues."},
     "chk_ok": {"de": "Rise and Fall {gv} erkannt.", "ru": "Найдена Rise and Fall {gv}.",
                "en": "Rise and Fall {gv} found."},
     "missing": {"de": "fehlt: {rel}", "ru": "отсутствует: {rel}", "en": "missing: {rel}"},

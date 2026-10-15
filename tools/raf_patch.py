@@ -541,13 +541,15 @@ OVERLAYS = {
     "maps": Overlay("maps", REPO / "rms", lambda st: [PY, "tools/gen_rms.py"], mapping=_map_files),
     # built by other tools; installed only when present (docs/survival.md, docs/language.md)
     "survival": Overlay("survival", WORK / "overlay-survival",
-                        lambda st: [PY, "tools/build_survival.py", st, WORK / "overlay-survival", "--theme", "all"]),
+                        lambda st: [PY, "tools/build_survival.py", st, WORK / "overlay-survival", "--theme", "all",
+                                    "--lang", TEXT_LANG]),
     # diagnostic map "(4) Survival Probe" (docs/survival.md 5a); test only
     "survival-probe": Overlay("survival-probe", WORK / "overlay-survival-probe",
-                              lambda st: [PY, "tools/build_survival.py", st, WORK / "overlay-survival-probe", "--probe"]),
+                              lambda st: [PY, "tools/build_survival.py", st, WORK / "overlay-survival-probe", "--probe",
+                                          "--lang", TEXT_LANG]),
     # co-op modes: Survival Endless, Boss Hunt, Co-op Roles (+ vs AI), Co-op vs Hard AI (docs/coop-modes.md)
     "coop-modes": Overlay("coop-modes", WORK / "overlay-coop",
-                          lambda st: [PY, "tools/build_coop.py", st, WORK / "overlay-coop"]),
+                          lambda st: [PY, "tools/build_coop.py", st, WORK / "overlay-coop", "--lang", TEXT_LANG]),
     # generated at apply time by raf_credits.py from the Language.dll / loadscreen.bmp that would
     # otherwise be installed; keep it after lang-en so it patches whichever Language.dll is used
     "credits": Overlay("credits", WORK / "overlay-credits", None,
@@ -610,10 +612,23 @@ GAMEPLAY_DIRS = ["Data/db", "Data/random map scripts", "Data/unit ai scripts", "
                  "Data/scenarios"]  # language stays out
 # their .rmv files take the lobby name/help from Language.dll ids (tools/map_texts.py)
 MAP_TEXT_FEATURES = ("survival", "survival-probe", "coop-modes")
+# language of the stock install ("ru" or "en"), set by apply(); our new texts follow it
+TEXT_LANG = "ru"
+LANG_MARKER = "lang.txt"  # in an overlay root: the TEXT_LANG it was built with
+
+
+def stock_lang(stock: Path) -> str:
+    """'ru' when the stock Language.dll holds Russian text, else 'en'. Counts UTF-16LE Cyrillic code
+    units (U+0410..U+044F): the Russian dll has about 124000, an English one only stray bytes."""
+    b = (stock / "Language.dll").read_bytes()
+    n = sum(1 for i in range(0, len(b) - 1, 2) if b[i + 1] == 0x04 and 0x10 <= b[i] <= 0x4F)
+    return "ru" if n > 1000 else "en"
 
 
 def build_credits(feats: list, stock: Path) -> None:
     import raf_credits as rc
+
+    text = "en" if "lang-en" in feats or TEXT_LANG == "en" else "ru"
 
     out = WORK / "overlay-credits"
     shutil.rmtree(out, ignore_errors=True)
@@ -625,12 +640,12 @@ def build_credits(feats: list, stock: Path) -> None:
     if "zoom-setting" in feats:
         import zoom_setting as zs
 
-        extra = zs.string_repl("en" if "lang-en" in feats else "ru")
+        extra = zs.string_repl(text)
     if any(f in feats for f in MAP_TEXT_FEATURES):
         # lobby name + help of our scenario maps: their .rmv files name these string ids
         import map_texts
 
-        extra = {**extra, **map_texts.string_repl("en" if "lang-en" in feats else "ru")}
+        extra = {**extra, **map_texts.string_repl(text)}
     menu = "credits" in feats and "menu-credit" in feats
     rc.patch_language_dll(lang, out / "Language.dll", REMASTER_VERSION, extra=extra,
                           credits="credits" in feats, menu=menu)
@@ -695,8 +710,12 @@ def sync_overlays(game: Path, enabled: list, stock: Path, rebuild: bool, state: 
         active.append(mutator_overlay(state["mutator"]))
     for ov in active:
         name = ov.name
-        if (rebuild and ov.build_cmd) or not ov.built():
+        marker = ov.root / LANG_MARKER
+        lang_stale = name in MAP_TEXT_FEATURES and (not marker.exists() or marker.read_text().strip() != TEXT_LANG)
+        if (rebuild and ov.build_cmd) or not ov.built() or lang_stale:
             ov.build(stock)
+            if name in MAP_TEXT_FEATURES:
+                marker.write_text(TEXT_LANG + "\n", encoding="ascii")
         hashes = ov.stock_hashes()
         for rel, src in ov.files().items():
             plan[rel] = (name, src)
@@ -795,6 +814,9 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     if mutator is not None:
         state["mutator"] = None if mutator in ("", "none") else mutator
     stock = Path(stock) if stock else default_stock(game)
+    global TEXT_LANG
+    TEXT_LANG = stock_lang(stock)
+    print(f"game language: {TEXT_LANG}")
     for name in MODIFIED:
         if not (orig / name).exists():
             shutil.copy2(game / name, orig / name)

@@ -4,7 +4,9 @@
 
 An unofficial remaster patch for Rise and Fall: Civilization at War.
 
-It supports the Russian version 1.15 of the game. Other versions are not supported yet.
+It is tested with the Russian version 1.15 of the game. Other language versions of 1.15 may work if they use the same game exe. The installer checks this first & tells you if yours does not match. In that case please open an issue so I can add your version.
+
+On a non-Russian install the new texts (co-op maps, menus) are English.
 
 ## Features
 

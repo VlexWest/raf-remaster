@@ -345,16 +345,19 @@ def quick_check(src: Path, cfg: dict):
 
 
 def full_check(src: Path, cfg: dict, progress=None):
-    """(errors, warnings). Every hashed stock file must exist and match; extra files in the gameplay
-    folders only warn (the fingerprint then differs from the other players)."""
+    """(errors, warnings). Every hashed stock file must exist; the code files and Data/db must match.
+    Other language versions differ in their texts (Language.dll, loading screen, scenario headers):
+    those, and extra files in the gameplay folders, only warn (the fingerprint then differs from the
+    other players)."""
     errors, warnings = [], []
     items = sorted(cfg["stock"].items())
     for i, (rel, want) in enumerate(items):
         p = src / rel
+        strict = rel in (EXE, "DX9Rasterizer.dll") or rel.lower().startswith("data/db/")
         if not p.is_file():
             errors.append(T("missing", rel=rel))
         elif sha256(p) != want:
-            errors.append(T("changed", rel=rel))
+            (errors if strict else warnings).append(T("changed", rel=rel))
         if progress:
             progress(i + 1, len(items))
     known = {r.lower() for r in cfg["stock"]}
