@@ -41,7 +41,7 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
-REMASTER_VERSION = "0.3.0"
+REMASTER_VERSION = "1.0"
 EXE = "RiseAndFall.exe"
 STATE_DIR = ".raf-remaster"
 REPO = Path(__file__).resolve().parent.parent
@@ -69,6 +69,7 @@ start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" %*
 # Command line: the game splits it on '-', value between the first pair of quotes,
 # so values must not contain '-'.
 HOST_BAT = """@echo off
+rem Rise and Fall Remaster by Alexander West - thewest.cc/raf
 rem Host a LAN / direct-IP network game: Host.bat ["Game name"] ["Player name"]
 rem (no '-' in names). The game needs player name, pid and pass next to hostgame.
 cd /d "%~dp0"
@@ -83,6 +84,7 @@ start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" -hostgame "%N
 """
 
 JOIN_BAT = """@echo off
+rem Rise and Fall Remaster by Alexander West - thewest.cc/raf
 rem Join a network game by IP: Join.bat [1.2.3.4] ["Player name"]   (no '-' in names)
 cd /d "%~dp0"
 type REMASTER.txt
@@ -452,7 +454,16 @@ OVERLAYS = {
                        mapping=_unit_ai_files),
     "maps": Overlay("maps", REPO / "rms", lambda st: [PY, "tools/gen_rms.py"], mapping=_map_files),
     # built by other tools; installed only when present (docs/survival.md, docs/language.md)
-    "survival": Overlay("survival", WORK / "overlay-survival", None, manifest=WORK / "overlay-survival" / "manifest.json"),
+    # --unitset-base 134: with the default offset the "human town centres" selection is empty
+    # and the game is lost 30 s in (live test 2026-10-15)
+    "survival": Overlay("survival", WORK / "overlay-survival-134",
+                        lambda st: [PY, "tools/build_survival.py", st, WORK / "overlay-survival-134",
+                                    "--theme", "all", "--unitset-base", "134"]),
+    # generated at apply time by raf_credits.py from the Language.dll / loadscreen.bmp that would
+    # otherwise be installed; keep it after lang-en so it patches whichever Language.dll is used
+    "credits": Overlay("credits", WORK / "overlay-credits", None,
+                       mapping=lambda: {p.relative_to(WORK / "overlay-credits").as_posix(): p
+                                        for p in sorted((WORK / "overlay-credits").rglob("*")) if p.is_file()}),
     "lang-en": Overlay("lang-en", WORK / "overlay-lang-en",
                        lambda st: [PY, "tools/build_language.py", st, WORK / "overlay-lang-en"]),
 }
@@ -482,15 +493,37 @@ FEATURES = {
     "maps": False,
     "survival": False,
     "lang-en": False,
+    "credits": True,
 }
 # The autodetect does not know the GPU and leaves every quality at 0 ("Низко"); 3 = "Ультра".
 # The shader upgrade only shows with the higher techniques.
 ULTRA = {f"Graphics Settings/{n} Quality Level": 3 for n in ("Model", "Water", "Particle", "Terrain")}
 ULTRA.update({"Graphics Settings/Flora Quality": 3,
               "Render Reflections": 1, "Flora Enabled": 1})
-OVERLAY_ORDER = list(OVERLAYS)  # dict order = install priority; the mutator goes last
+OVERLAY_ORDER = [n for n in OVERLAYS if n != "credits"] + ["credits"]  # later wins; mutator after all
 # Files that decide the simulation; all players must match (REMASTER.txt fingerprint).
-GAMEPLAY_DIRS = ["Data/db", "Data/random map scripts", "Data/unit ai scripts"]  # language stays out
+GAMEPLAY_DIRS = ["Data/db", "Data/random map scripts", "Data/unit ai scripts", "Data/map scripts",
+                 "Data/scenarios"]  # language stays out
+
+
+def build_credits(feats: list, stock: Path) -> None:
+    import raf_credits as rc
+
+    out = WORK / "overlay-credits"
+    shutil.rmtree(out, ignore_errors=True)
+    # the copyright label (Language.dll 7209, carries our line) is not drawn on the 3D main menu even
+    # when moved (rc.patch_menu_xml, tested): the line shows where the game uses 7209 elsewhere
+    lang = OVERLAYS["lang-en"].root / "Language.dll" if "lang-en" in feats else stock / "Language.dll"
+    rc.patch_language_dll(lang, out / "Language.dll", REMASTER_VERSION)
+    rc.stamp_loadscreen(stock / "loadscreen.bmp", out / "loadscreen.bmp", REMASTER_VERSION)
+    n = 0
+    # DDS textures are NOT signed: a signature in DDS_HEADER.dwReserved1 made textures fail to load
+    # (black main menu in the live test), so the generated textures keep the stock zeros there.
+    if "shaders" in feats and OVERLAYS["shaders"].built():
+        n += sum(rc.stamp_text(p, rc.SIGNATURE) for p in OVERLAYS["shaders"].files().values())
+    if "unit-ai" in feats and OVERLAYS["unit-ai"].built():
+        n += sum(rc.stamp_text(p, rc.SIGNATURE) for p in OVERLAYS["unit-ai"].files().values())
+    print(f"credits: menu line, credits roll, loading screen built; {n} files signed")
 
 
 def default_stock(game: Path) -> Path:
@@ -568,7 +601,7 @@ def fingerprint(game: Path) -> str:
     h = hashlib.sha256()
     for d in GAMEPLAY_DIRS:
         for f in sorted((game / d).rglob("*"), key=lambda p: p.as_posix().lower()):
-            if f.is_file():
+            if f.is_file() and f.suffix.lower() != ".lcl":  # .lcl = scenario text (language pack)
                 h.update(f.relative_to(game).as_posix().lower().encode() + b"\0")
                 h.update(hashlib.sha256(f.read_bytes()).digest())
     return h.hexdigest()[:12]
@@ -649,6 +682,8 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     if cur != MENU_ASPECT_OLD and cur.startswith("68"):
         byte_patches(game, [(EXE, MENU_ASPECT_VA, MENU_ASPECT_OLD, cur, "menu 3D aspect")], False, "menu-aspect (old)")
 
+    if "credits" in feats:
+        build_credits(feats, stock)
     had_shaders = "shaders" in state.get("features", [])
     sync_overlays(game, feats, stock, rebuild, state)
     if had_shaders != ("shaders" in feats) or ("shaders" in feats and rebuild):
