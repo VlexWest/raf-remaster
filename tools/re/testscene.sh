@@ -6,5 +6,5 @@ P=$(python tools/gamectl.py launch D:/Games/RAF-remaster); echo $P > $S/pid; ech
 sleep ${WAIT:-40}
 # the game ignores clicks until it has been deactivated and re-activated (twice to be safe)
 for i in 1 2; do timeout 20 $UM win drive --proc WindowsTerminal focus >/dev/null 2>&1; timeout 40 $UM win drive --proc RiseAndFall focus "sleep 800" "move 1720 700" >/dev/null 2>&1; done
-timeout 40 $UM win drive --proc RiseAndFall focus "sleep 1000" "move 430 1347" "sleep 300" "click 430 1347" "sleep 2500" "click 928 444" "sleep 3500" "click 2160 1344" >/dev/null 2>&1
+timeout 40 $UM win drive --proc RiseAndFall focus "sleep 1000" "move 430 1347" "sleep 300" "click 430 1347" "sleep 2500" "click 928 444" "sleep 3500" "click 1220 146" "sleep 900" "click 1220 232" "sleep 900" "click 2160 1344" >/dev/null 2>&1
 sleep 35
