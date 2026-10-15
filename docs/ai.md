@@ -99,6 +99,8 @@ Adds `Idle { AmIUnderAttack true(UnderAttack) }`, `UnderAttack { CanFlee true(Ru
 
 ### Diffs
 
+Only the changed lines are shown: `-` is the line in the stock script (file:line), `+` is ours. The surrounding lines are in your own install.
+
 ```diff
 # Generic Attack.tai:62 (CheckRange) & :126 (FaceEnemyUnit); Naval Onager.tai:41, :105 & :173 (WaitForReload)
 -	allof(GoalIsPlayerInitiated,UnitIsArtillery,EnemyWithinMinimumRange) true(MoveOutOfMinimumRange)
