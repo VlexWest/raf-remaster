@@ -20,6 +20,16 @@ Netzwerkspiel
 - "Netzwerkspiel hosten" öffnet direkt eine LAN-Lobby, "Netzwerkspiel beitreten" fragt
   nach der IP des Hosts.
 
+Updates
+- Die Verknüpfungen starten "RaF Remaster.exe": Sie sucht nach einer neuen Remaster-Version
+  (höchstens alle 6 Stunden, ohne Internet still übersprungen) und startet dann das Spiel. Gibt
+  es eine, fragt sie: "Jetzt aktualisieren", "Später" oder "Diese Version überspringen". Ohne
+  deinen Klick wird nichts installiert.
+- Ein Update lädt den neuen Installer (per sha256 geprüft), baut das Remaster aus deinem
+  Originalspiel in einem neuen Ordner neu und tauscht ihn aus. Spielstände, Profile, eigene
+  Dateien sowie Grafik- und Zoom-Einstellungen bleiben. Geht etwas schief, bleibt die alte Version.
+- Nach einem Update den Fingerabdruck wieder mit den Mitspielern vergleichen.
+
 Deinstallieren
 - Startmenü "Rise and Fall Remaster deinstallieren", Windows-Einstellungen > Apps, oder
   Uninstall.bat im Remaster-Ordner. Das löscht den Remaster-Ordner, die Verknüpfungen
@@ -39,7 +49,7 @@ Fehler
 - Das Protokoll steht in %TEMP%\RaF-Remaster-Setup.log.
 
 Lizenzen
-- Remaster-Code: MIT (RaF-Remaster-MIT.txt). Mitgelieferte Programme und ihre Lizenzen:
+- Remaster-Code: Apache 2.0 (RaF-Remaster-Apache-2.0.txt, Hinweise in REMASTER-NOTICE.txt). Mitgelieferte Programme und ihre Lizenzen:
   Ordner "licenses" bzw. "Remaster-Licenses" im Spielordner (DXVK, texconv/DirectXTex,
   Real-ESRGAN ncnn Vulkan + Modell, ncnn, Python, NumPy, Pillow, pefile, Tcl/Tk,
   PyInstaller).

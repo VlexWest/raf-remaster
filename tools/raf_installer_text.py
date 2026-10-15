@@ -199,6 +199,70 @@ TEXT = {
     "un_running": {"de": "Bitte zuerst das Spiel schließen und dann erneut starten.",
                    "ru": "Сначала закройте игру, затем запустите удаление снова.",
                    "en": "Please close the game first, then run this again."},
+    # launcher (raf_launcher.py)
+    "upd_title": {"de": "{app}: Update", "ru": "{app}: обновление", "en": "{app}: update"},
+    "upd_available": {"de": "Version {new} ist verfügbar (installiert: {cur}).",
+                      "ru": "Доступна версия {new} (установлена: {cur}).",
+                      "en": "Version {new} is available (installed: {cur})."},
+    "upd_changes": {"de": "Neu in dieser Version:", "ru": "Что нового:", "en": "What's new:"},
+    "upd_mp": {"de": "Installiert: {cur}, Gameplay-Fingerabdruck {fp}. Im Netzwerkspiel brauchen alle Spieler "
+                     "dieselbe Version und denselben Fingerabdruck.",
+               "ru": "Установлено: {cur}, отпечаток игровых данных {fp}. В сетевой игре у всех игроков должны "
+                     "быть одинаковые версия и отпечаток.",
+               "en": "Installed: {cur}, gameplay fingerprint {fp}. In a network game all players need the same "
+                     "version and fingerprint."},
+    "btn_update": {"de": "Jetzt aktualisieren", "ru": "Обновить сейчас", "en": "Update now"},
+    "btn_later": {"de": "Später", "ru": "Позже", "en": "Later"},
+    "btn_skip": {"de": "Diese Version überspringen", "ru": "Пропустить эту версию", "en": "Skip this version"},
+    "btn_cancel": {"de": "Abbrechen", "ru": "Отмена", "en": "Cancel"},
+    "upd_download": {"de": "Lade das Update herunter: {done:.0f} von {total:.0f} MB",
+                     "ru": "Загрузка обновления: {done:.0f} из {total:.0f} МБ",
+                     "en": "Downloading the update: {done:.0f} of {total:.0f} MB"},
+    "upd_err_download": {"de": "Das Update konnte nicht geladen werden:\n{msg}\n\nDas Spiel startet mit der "
+                               "installierten Version.",
+                         "ru": "Не удалось загрузить обновление:\n{msg}\n\nИгра запустится с установленной "
+                               "версией.",
+                         "en": "The update could not be downloaded:\n{msg}\n\nThe game starts with the installed "
+                               "version."},
+    "upd_none": {"de": "Kein Update: {cur} ist die neueste Version.", "ru": "Обновлений нет: {cur} – последняя версия.",
+                 "en": "No update: {cur} is the newest version."},
+    "upd_check_failed": {"de": "Die Update-Prüfung ist fehlgeschlagen: {msg}",
+                         "ru": "Не удалось проверить обновления: {msg}", "en": "The update check failed: {msg}"},
+    # installer update mode (--update)
+    "upd_setup_title": {"de": "{app}: Update auf {ver}", "ru": "{app}: обновление до {ver}",
+                        "en": "{app}: update to {ver}"},
+    "upd_running": {"de": "Das Spiel läuft noch aus {d}. Bitte schließen und dann „Wiederholen“ klicken.",
+                    "ru": "Игра ещё запущена из {d}. Закройте её и нажмите «Повторить».",
+                    "en": "The game is still running from {d}. Please close it, then click Retry."},
+    "upd_stock_missing": {
+        "de": "Das Originalspiel wurde unter {p} nicht gefunden oder passt nicht ({msg}). Bitte den Ordner des "
+              "originalen Rise and Fall wählen.",
+        "ru": "Оригинальная игра не найдена в {p} или не подходит ({msg}). Выберите папку оригинальной "
+              "Rise and Fall.",
+        "en": "The original game was not found at {p} or does not match ({msg}). Please choose the folder of "
+              "the original Rise and Fall."},
+    "upd_in_use": {"de": "Der Remaster-Ordner wird gerade benutzt ({msg}). Bitte Explorer-Fenster und Programme "
+                         "in diesem Ordner schließen und „Wiederholen“ klicken.",
+                   "ru": "Папка ремастера сейчас используется ({msg}). Закройте окна проводника и программы в этой "
+                         "папке и нажмите «Повторить».",
+                   "en": "The remaster folder is in use ({msg}). Please close Explorer windows and programs in that "
+                         "folder, then click Retry."},
+    "upd_no_info": {"de": "{d} ist keine Remaster-Installation.", "ru": "{d} – не установка ремастера.",
+                    "en": "{d} is not a remaster install."},
+    "step_swap": {"de": "Ersetze die alte Version", "ru": "Замена старой версии", "en": "Replacing the old version"},
+    "step_carry": {"de": "Übernehme Spielstände und eigene Dateien", "ru": "Перенос сохранений и ваших файлов",
+                   "en": "Taking over saves and your own files"},
+    "upd_done": {"de": "Update auf {ver} fertig. Gameplay-Fingerabdruck: {fp}. Das Spiel startet.",
+                 "ru": "Обновление до {ver} завершено. Отпечаток игровых данных: {fp}. Игра запускается.",
+                 "en": "Update to {ver} complete. Gameplay fingerprint: {fp}. The game is starting."},
+    "upd_fp_changed": {"de": "Der Fingerabdruck hat sich geändert ({old} -> {new}): alle Mitspieler brauchen "
+                             "diese Version.",
+                       "ru": "Отпечаток изменился ({old} -> {new}): всем игрокам нужна эта версия.",
+                       "en": "The fingerprint changed ({old} -> {new}): all players need this version."},
+    "upd_failed": {"de": "Das Update ist fehlgeschlagen, die bisherige Version ist unverändert:\n\n{msg}\n\n"
+                         "Protokoll: {log}",
+                   "ru": "Обновление не удалось, прежняя версия не изменена:\n\n{msg}\n\nЖурнал: {log}",
+                   "en": "The update failed, the previous version is unchanged:\n\n{msg}\n\nLog: {log}"},
     # overlay names in progress messages
     "f_mips": {"de": "Mipmaps", "ru": "MIP-уровни текстур", "en": "mipmaps"},
     "f_hd-terrain": {"de": "HD-Geländetexturen (Grafikkarte)", "ru": "HD-текстуры местности (видеокарта)",

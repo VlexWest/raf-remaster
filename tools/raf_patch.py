@@ -47,7 +47,9 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
-REMASTER_VERSION = "1.0"
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # raf_version and the other tools
+
+from raf_version import VERSION as REMASTER_VERSION  # noqa: E402
 EXE = "RiseAndFall.exe"
 STATE_DIR = ".raf-remaster"
 REPO = Path(__file__).resolve().parent.parent
@@ -65,11 +67,17 @@ d3d9.maxFrameLatency = 1
 d3d9.samplerAnisotropy = 16
 """
 
+LAUNCHER_EXE = "RaF Remaster.exe"  # copied by the installer (tools/raf_launcher.py): update check, then the game
+# The start scripts go through the launcher when it is there (it adds -datapath/-redistpath itself).
+RUN_LINES = """set "RUN=RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\""
+if exist "RaF Remaster.exe" set RUN="RaF Remaster.exe"
+"""
+
 LAUNCH_BAT = """\
 @echo off
 cd /d "%~dp0"
 type REMASTER.txt
-start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" %*
+""" + RUN_LINES + """start "" %RUN% %*
 """
 
 # Command line: the game splits it on '-', value between the first pair of quotes,
@@ -86,7 +94,7 @@ set "NAME=%~1"
 if "%NAME%"=="" set "NAME=RAF Remaster"
 set "PLAYER=%~2"
 if "%PLAYER%"=="" set "PLAYER=%USERNAME%"
-start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" -hostgame "%NAME%" -playername "%PLAYER%" -pid "1" -pass "raf"
+""" + RUN_LINES + """start "" %RUN% -hostgame "%NAME%" -playername "%PLAYER%" -pid "1" -pass "raf"
 """
 
 JOIN_BAT = """@echo off
@@ -101,7 +109,7 @@ if "%IP%"=="" set /p "IP=IP address of the host: "
 if "%IP%"=="" exit /b 1
 set "PLAYER=%~2"
 if "%PLAYER%"=="" set "PLAYER=%USERNAME%"
-start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" -joinbyip "%IP%" -playername "%PLAYER%" -pid "2" -pass "raf"
+""" + RUN_LINES + """start "" %RUN% -joinbyip "%IP%" -playername "%PLAYER%" -pid "2" -pass "raf"
 """
 
 # Files the patcher creates from scratch; revert deletes them.
@@ -375,15 +383,16 @@ def _reg_split(name: str):
     return (REG_KEY + "\\" + sub if sub else REG_KEY), value
 
 
-def set_registry(game: Path, values: dict, release=(), defaults=None) -> None:
+def set_registry(game: Path, values: dict, release=(), defaults=None, keep=()) -> None:
     """Set DWORD values (names may be 'Subkey/Value'), saving the values found before the
     first apply; names in `release` go back to their saved value. `defaults` are only written
-    the first time the patcher manages them, so a value the player changed in game survives."""
+    the first time the patcher manages them, so a value the player changed in game survives.
+    Names in `keep` are treated like defaults (installer update: the player's settings stay)."""
     import winreg
 
     saved_path = game / STATE_DIR / "registry.json"
     saved = json.loads(saved_path.read_text()) if saved_path.exists() else {}
-    values = dict(values)
+    values = {n: v for n, v in values.items() if not (n in keep and n in saved)}
     for name, value in (defaults or {}).items():
         if name not in saved and name not in values:
             values[name] = value
@@ -760,7 +769,10 @@ def choose_features(state: dict, only, skip) -> list:
 
 
 def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=None, zoom=None,
-          net=None) -> None:
+          net=None, keep_settings=False) -> None:
+    """keep_settings (installer update, registry.json carried over from the old install): every
+    registry value the patcher already manages keeps its current value, except the network
+    adapter, which is picked again."""
     orig = game / STATE_DIR / "orig"
     orig.mkdir(parents=True, exist_ok=True)
     state = load_state(game)
@@ -859,7 +871,8 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
         reg.update(ULTRA)
     else:
         release += list(ULTRA)
-    set_registry(game, reg, release, defaults)
+    keep = ([n for n in reg if n != "Network Adapter"] + list(defaults)) if keep_settings else ()
+    set_registry(game, reg, release, defaults, keep)
 
     fp = fingerprint(game)
     (game / "REMASTER.txt").write_text(

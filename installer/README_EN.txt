@@ -18,6 +18,15 @@ Network games
   folder). All players need the same fingerprint, otherwise the game breaks off.
 - "Host network game" opens a LAN lobby directly, "Join network game" asks for the host's IP.
 
+Updates
+- The shortcuts start "RaF Remaster.exe": it looks for a new remaster version (at most every
+  6 hours, silently skipped when offline) and then starts the game. If there is one it asks:
+  "Update now", "Later" or "Skip this version". Nothing is installed without your click.
+- An update downloads the new setup (checked by its sha256), rebuilds the remaster from your
+  original game in a new folder and swaps it in. Saves, profiles and your own files are kept,
+  and so are your graphics and zoom settings. If anything fails, the previous version stays.
+- Compare the fingerprint with your friends again after an update.
+
 Uninstall
 - Start menu "Uninstall Rise and Fall Remaster", Windows Settings > Apps, or Uninstall.bat in
   the remaster folder. It deletes the remaster folder and shortcuts and restores the registry
@@ -36,6 +45,6 @@ Problems
 - The log is in %TEMP%\RaF-Remaster-Setup.log.
 
 Licenses
-- Remaster code: MIT (RaF-Remaster-MIT.txt). Bundled programs and their licenses: folder
+- Remaster code: Apache 2.0 (RaF-Remaster-Apache-2.0.txt, notices in REMASTER-NOTICE.txt). Bundled programs and their licenses: folder
   "licenses" or "Remaster-Licenses" in the game folder (DXVK, texconv/DirectXTex, Real-ESRGAN
   ncnn Vulkan + model, ncnn, Python, NumPy, Pillow, pefile, Tcl/Tk, PyInstaller).

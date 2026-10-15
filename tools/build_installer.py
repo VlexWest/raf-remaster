@@ -10,7 +10,11 @@ Steps:
      installer.json (release feature set, zoom, expected fingerprint, stock sha256 list).
      No game file and nothing built from one goes into the bundle: every overlay is built on the
      player's PC from the player's install.
-  3. PyInstaller --onefile --windowed -> dist/RaF-Remaster-Setup.exe, README + licenses next to it.
+  3. the launcher "RaF Remaster.exe" (tools/raf_launcher.py: update check, then the game), PyInstaller
+     --onedir with its runtime in ".raf-launcher" next to it, goes into the bundle (bundle/launcher);
+     the installer copies it into the game folder.
+     PyInstaller --onefile --windowed -> dist/RaF-Remaster-Setup.exe, README + licenses next to it,
+     dist/RaF-Remaster-Setup.exe.sha256 for the GitHub release (docs/release.md).
   4. scan: every file inside the exe (CArchive + PYZ) is hashed and compared with every file of the
      stock install, work/overlay-* and ai/unit ai scripts; the content is also searched for personal
      paths and the account e-mail. Any hit fails the build.
@@ -35,6 +39,9 @@ VENV = REPO / "work" / "tools" / "installer-venv"
 VPY = VENV / "Scripts" / "python.exe"
 DIST = REPO / "dist"
 NAME = "RaF-Remaster-Setup"
+LAUNCHER_NAME = "RaF Remaster"
+LAUNCHER_CONTENTS = ".raf-launcher"
+LAUNCHER_DIST = WORK / "launcher-dist"
 
 sys.path.insert(0, str(TOOLS))
 import raf_patch as rp  # noqa: E402
@@ -187,7 +194,9 @@ def make_bundle(stock: Path):
         shutil.copy2(src, BUNDLE / rel)
     lic = BUNDLE / "licenses"
     shutil.copytree(REPO / "installer" / "licenses", lic)
-    shutil.copy2(REPO / "LICENSE", lic / "RaF-Remaster-MIT.txt")
+    shutil.copy2(REPO / "LICENSE", lic / "RaF-Remaster-Apache-2.0.txt")
+    shutil.copy2(REPO / "NOTICE", lic / "NOTICE.txt")
+    shutil.copy2(REPO / "NOTICE", BUNDLE / "NOTICE")  # -> REMASTER-NOTICE.txt in the game folder
     (lic / "Microsoft-vcomp140.txt").write_text(
         "vcomp140.dll (OpenMP runtime used by realesrgan-ncnn-vulkan) is part of the Microsoft Visual C++\n"
         "Redistributable and is shipped unchanged as in the upstream Real-ESRGAN ncnn Vulkan release\n"
@@ -205,6 +214,29 @@ def make_bundle(stock: Path):
     print(f"bundle: {len(local)} modules, {len(external)} external imports, {len(stock_map)} stock hashes, "
           f"expected fingerprint {fp}")
     return external
+
+
+def build_launcher():
+    """RaF Remaster.exe (onedir: no unpacking at every game start) -> bundle/launcher."""
+    shutil.rmtree(LAUNCHER_DIST, ignore_errors=True)
+    cmd = [str(VPY), "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--windowed", "--name", LAUNCHER_NAME,
+           "--contents-directory", LAUNCHER_CONTENTS, "--distpath", str(LAUNCHER_DIST),
+           "--workpath", str(WORK / "pyi-launcher"), "--specpath", str(WORK), "--paths", str(TOOLS),
+           "--exclude-module", "numpy", "--exclude-module", "PIL", "--exclude-module", "pefile",
+           str(TOOLS / "raf_launcher.py")]
+    subprocess.run(cmd, check=True, cwd=REPO)
+    src = LAUNCHER_DIST / LAUNCHER_NAME
+    dst = BUNDLE / "launcher"
+    shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(src, dst)
+    size = sum(f.stat().st_size for f in dst.rglob("*") if f.is_file())
+    print(f"launcher: {dst / (LAUNCHER_NAME + '.exe')}, {sum(1 for _ in dst.rglob('*'))} entries, {size / 1e6:.1f} MB")
+
+
+def write_hash(exe: Path) -> str:
+    h = fsha(exe)
+    (exe.parent / (exe.name + ".sha256")).write_text(f"{h}  {exe.name}\n", encoding="ascii")
+    return h
 
 
 def pyinstaller(external):
@@ -311,8 +343,10 @@ def main():
         external = make_bundle(stock)
         if "--skip-exe" in args:
             return
+        build_launcher()
         pyinstaller(external)
-        print(f"built {exe} ({exe.stat().st_size / 1e6:.1f} MB), sha256 {fsha(exe)[:12]}")
+        print(f"built {exe} ({exe.stat().st_size / 1e6:.1f} MB), sha256 {write_hash(exe)[:12]} "
+              f"(+ {exe.name}.sha256), version {rp.REMASTER_VERSION}")
     if not scan(exe, stock):
         sys.exit(1)
 
