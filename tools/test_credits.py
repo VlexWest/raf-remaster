@@ -13,6 +13,7 @@ touches the game folder, the registry or a running game.
    files outside the gameplay fingerprint, expected fingerprint unchanged
 """
 import contextlib
+import logging
 import hashlib
 import io
 import re
@@ -39,6 +40,7 @@ GAME = Path(args[0] if args else "D:/Games/Rise and Fall")
 LANG_EN = REPO / "work" / "overlay-lang-en" / "Language.dll"
 FINGERPRINT = "40f38837c783"  # release set (tools/build_installer.py FEATURES)
 FAILED = []
+logging.getLogger("fontTools").setLevel(logging.ERROR)
 
 
 def check(name, cond, extra=""):
@@ -80,32 +82,48 @@ def xml_checks(tmp: Path):
         check("menu XML well-formed", False, str(e))
         return
     ctls = root.findall("XMLControl")
-    check("one control added", len(ctls) == len(ET.fromstring(src.read_bytes()).findall("XMLControl")) + 1)
     nl = "\r\n" if "\r\n" in stock else "\n"
     block = rc.menu_control_xml().replace("\n", nl)
-    check("stock text unchanged apart from the appended control", new.replace(block, "", 1) == stock)
+    check("stock text unchanged apart from the appended controls", new.replace(block, "", 1) == stock)
     check("line endings match the stock file", ("\r\n" in new) == ("\r\n" in stock) and new.count("\r\n") in (0, new.count("\n")))
     idx = [int(c.get("FormIndex")) for c in ctls]
     check("form indices unique", len(idx) == len(set(idx)), idx)
-    check("new index below NumOfControls", rc.MENU_INDEX < int(root.get("NumOfControls")))
     check("form ID still 12, NumOfControls unchanged", root.get("ID") == "12" and root.get("NumOfControls") == "20")
-    mine = next(c for c in ctls if c.get("FormIndex") == str(rc.MENU_INDEX))
-    check("AlwaysDirty + TextParser Default + right aligned",
-          mine.get("AlwaysDirty") == "True" and mine.get("TextParser") == "Default"
-          and mine.get("TextAlignment") == "RightJustify")
-    lbl = mine.find("SingleLineTextLabel")
-    check("label reads the menu string id", lbl is not None and lbl.get("StringTableStart") == str(rc.MENU_LINE_ID))
-    check("no events on the label", mine.find("ControlEvents").get("NumOfEvents") == "0")
-    vals = [c.get("Value") for c in ctls]
-    check("control value unique in the form", vals.count(str(rc.MENU_VALUE)) == 1)
-    r = rc.MENU_RECT
-    check("inside the 1600 x 1200 design space", 0 <= r[0] < r[1] <= 1600 and 0 <= r[2] < r[3] <= int(root.get("DesignedHeight")))
-    clash = [(i, v, rr) for i, v, rr in rects(stock) if overlap(r, rr) and i != 6]  # 6 = tooltip popup, moves
-    check("no overlap with any stock control (visible or hidden)", not clash, clash)
+    check("two labels added", len(ctls) - len(rects(stock)) == len(rc.MENU_LABELS) == 2)
     bar = [rr for i, v, rr in rects(stock) if i in (11, 12, 13, 14, 15)]
-    check("sits above the bottom button bar", all(r[3] <= rr[2] for rr in bar), (r, bar))
+    vals = [c.get("Value") for c in ctls]
+    mine_rects = []
+    for n, (fi, value, r, fattr, col, sid) in enumerate(rc.MENU_LABELS, 1):
+        mine = next(c for c in ctls if c.get("FormIndex") == str(fi))
+        check(f"label {n}: index below NumOfControls", fi < int(root.get("NumOfControls")))
+        check(f"label {n}: AlwaysDirty + TextParser Default + right aligned",
+              mine.get("AlwaysDirty") == "True" and mine.get("TextParser") == "Default"
+              and mine.get("TextAlignment") == "RightJustify")
+        lbl = mine.find("SingleLineTextLabel")
+        check(f"label {n}: reads string {sid}", lbl is not None and lbl.get("StringTableStart") == str(sid))
+        check(f"label {n}: no events", mine.find("ControlEvents").get("NumOfEvents") == "0")
+        check(f"label {n}: control value unique in the form", vals.count(str(value)) == 1)
+        f = mine.find("ControlFont")
+        # the font attributes copy a stock control of the same font (StringID + Value)
+        same = re.search(r'<ControlFont StringID="%s" Value="%s"' % (f.get("StringID"), f.get("Value")),
+                         "".join(x.read_text(encoding="latin-1") for x in (GAME / "Data/user interface").glob("*.xml")))
+        check(f"label {n}: font StringID/Value pair used by a stock control", bool(same))
+        check(f"label {n}: scales to the control, shadow on", f.get("ScaleFontToFitControl") == "True" and f.get("Shadow") == "True")
+        check(f"label {n}: inside the 1600 x 1200 design space",
+              0 <= r[0] < r[1] <= 1600 and 0 <= r[2] < r[3] <= int(root.get("DesignedHeight")))
+        clash = [(i, v, rr) for i, v, rr in rects(stock) if overlap(r, rr) and i not in (6, 8)]
+        # 6 = tooltip popup (moves); 8 = stock copyright label, drawn once and covered (not AlwaysDirty)
+        check(f"label {n}: no overlap with any stock control (visible or hidden)", not clash, clash)
+        check(f"label {n}: inside the stone band of the frame texture (988-1046)", 988 <= r[2] and r[3] <= 1046, r)
+        check(f"label {n}: above the bottom button bar", all(r[3] <= rr[2] for rr in bar), (r, bar))
+        mine_rects.append(r)
+    check("the two labels do not overlap each other", not overlap(*mine_rects))
+    check("labels centred in the band (centre 1017 +- 3)",
+          abs((mine_rects[0][2] + mine_rects[-1][3]) / 2 - 1017) <= 3, mine_rects)
+    check("overlapped control 8 is the non-AlwaysDirty copyright label",
+          'AlwaysDirty' not in re.search(r'<XMLControl[^>]*FormIndex="8"[^>]*>', stock).group(0))
     # refusal paths
-    taken = stock.replace('FormIndex="15"', f'FormIndex="{rc.MENU_INDEX}"', 1)
+    taken = stock.replace('FormIndex="15"', f'FormIndex="{rc.MENU_LABELS[1][0]}"', 1)
     (tmp / "taken.xml").write_bytes(taken.encode("latin-1"))
     for name, data in (("form index taken refused", taken),
                        ("other form refused", stock.replace('XMLForm ID="12"', 'XMLForm ID="13"')),
@@ -154,14 +172,23 @@ def language_checks(tmp: Path):
     check("credit line text", line == "Rise and Fall Remaster v1.2.3 \u00b7 thewest.cc/raf", line)
     check("credit line encodable in cp1251", line.encode("cp1251") is not None)
     others = set(zs.string_repl("ru")) | set(map_texts.string_repl("ru"))
-    check("menu string id not used by zoom-setting or map texts", rc.MENU_LINE_ID not in others)
+    menu_ids = {rc.MENU_TITLE_ID: rc.MENU_TITLE, rc.MENU_SUB_ID: rc.MENU_SUB}
+    check("menu string ids not used by zoom-setting or map texts", not set(menu_ids) & others)
+    check("menu texts", rc.MENU_TITLE == "RISE AND FALL REMASTER"
+          and rc.MENU_SUB == "by Alexander West  \u00b7  thewest.cc/raf", (rc.MENU_TITLE, rc.MENU_SUB))
+    from fontTools.ttLib import TTFont
+    for sid, path in ((rc.MENU_TITLE_ID, GAME / "ROMIC.ttf"), (rc.MENU_SUB_ID, Path("C:/Windows/Fonts/georgia.ttf"))):
+        if path.exists():
+            cmap = TTFont(str(path)).getBestCmap()
+            miss = [ch for ch in menu_ids[sid] if ord(ch) not in cmap]
+            check(f"every glyph of string {sid} in {path.name}", not miss, miss)
     acp = ctypes.windll.kernel32.GetACP() if sys.platform == "win32" else 0
     for lang, src in (("ru", GAME / "Language.dll"), ("en", LANG_EN)):
         if not src.exists():
             print(f"skip Language.dll {lang}: {src} not built")
             continue
         d0 = Dll(str(src))
-        check(f"{lang}: id {rc.MENU_LINE_ID} free in the source DLL", rc.MENU_LINE_ID not in d0.strings)
+        check(f"{lang}: menu ids free in the source DLL", not set(menu_ids) & set(d0.strings))
         extra = {**zs.string_repl(lang), **map_texts.string_repl(lang)}
         for menu in (False, True):
             dst = tmp / f"Language-{lang}-{menu}.dll"
@@ -169,13 +196,15 @@ def language_checks(tmp: Path):
             d1 = Dll(str(dst))
             want = {**d0.strings, **extra}
             if menu:
-                want[rc.MENU_LINE_ID] = line
+                want.update(menu_ids)
             skip = (rc.COPYRIGHT_ID, rc.CREDITS_FIRST_ID, rc.CREDITS_TIME_ID)
             got = {k: v for k, v in d1.strings.items() if k not in skip}
             want = {k: v for k, v in want.items() if k not in skip}
             check(f"{lang} menu={menu}: only the expected strings changed", got == want,
                   sorted(set(got.items()) ^ set(want.items()))[:3])
-            check(f"{lang} menu={menu}: menu line present only with menu-credit", (rc.MENU_LINE_ID in d1.strings) == menu)
+            check(f"{lang} menu={menu}: menu line present only with menu-credit", all((i in d1.strings) == menu for i in menu_ids))
+            check(f"{lang} menu={menu}: copyright line stock with menu-credit, extended without",
+                  (d1.strings[rc.COPYRIGHT_ID] == d0.strings[rc.COPYRIGHT_ID]) == menu)
             roll = d1.strings[rc.CREDITS_FIRST_ID]
             check(f"{lang} menu={menu}: roll link escaped for the parser", "thewest.cc//raf" in roll
                   and not re.search(r"(?<!/)/raf", roll), roll[:120])
@@ -183,12 +212,13 @@ def language_checks(tmp: Path):
             if sys.platform == "win32":
                 check(f"{lang} menu={menu}: LoadStringW matches every string", verify_dll_loads(str(dst), d1.strings) == 0)
                 if menu:
-                    a = load_a(dst, [rc.MENU_LINE_ID])[rc.MENU_LINE_ID]
+                    a = load_a(dst, list(menu_ids))
                     if acp == 1251:
-                        check(f"{lang}: LoadStringA (cp1251) reads the menu line back", a == line.encode("cp1251"), a)
+                        check(f"{lang}: LoadStringA (cp1251) reads the menu lines back",
+                              all(a[i] == s.encode("cp1251") for i, s in menu_ids.items()), a)
                     else:
-                        check(f"{lang}: LoadStringA reads the menu line back (ACP {acp})",
-                              a.decode(f"cp{acp}", "replace") == line, a)
+                        check(f"{lang}: LoadStringA reads the menu lines back (ACP {acp})",
+                              all(a[i].decode(f"cp{acp}", "replace") == s for i, s in menu_ids.items()), a)
 
 
 # ---------------------------------------------------------------- 3. loading screen
@@ -234,7 +264,7 @@ def patcher_checks(tmp: Path):
             files = sorted(p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file())
             if "credits" not in feats:
                 check("menu-credit without credits: Language.dll only, no menu line",
-                      files == ["Language.dll"] and rc.MENU_LINE_ID not in __import__("build_language").Dll(str(out / "Language.dll")).strings, files)
+                      files == ["Language.dll"] and rc.MENU_TITLE_ID not in __import__("build_language").Dll(str(out / "Language.dll")).strings, files)
                 continue
             want = sorted(["Language.dll", "loadscreen.bmp"] + ([rc.MENU_XML] if menu else []))
             check(f"build_credits {feats}: files {want}", files == want, files)
@@ -259,43 +289,44 @@ def patcher_checks(tmp: Path):
 
 # ---------------------------------------------------------------- mock of the menu (preview only)
 def menu_mock():
-    """Where the line lands on a 3440x1440 screen: menu background movie frame stretched, control
-    rects of the stock form, our label in Tahoma bold at the control height. A mock, not the game."""
+    """Preview of the corner at 3440x1440: the stock frame texture (1600x1200 of it = the design
+    space) stretched like the game stretches the menu, the bar captions and our labels in the real
+    fonts (ROMIC.ttf from the install, Georgia), GDI cell height = control height. Not a screenshot."""
     if not PREVIEW:
         return
-    import subprocess
+    from fontTools.ttLib import TTFont
     from PIL import Image, ImageDraw, ImageFont
     from build_language import Dll
 
     W, H = 3440, 1440
-    frame = PREVIEW / "menu_frame.png"
-    if not frame.exists():
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "3", "-i", str(GAME / "Data/movies/Bink Main Menu.bik"),
-                        "-frames:v", "1", str(frame)], check=False)
-    bg = Image.open(frame).convert("RGB").resize((W, H)) if frame.exists() else Image.new("RGB", (W, H), (40, 50, 30))
-    d = ImageDraw.Draw(bg)
     sx, sy = W / 1600, H / 1200
+    tex = Image.open(GAME / "Data/textures/3DU_yMain_Backdrop.dds").convert("RGB").crop((0, 0, 1600, 1200))
+    bg = tex.resize((W, H), Image.LANCZOS)
+    d = ImageDraw.Draw(bg)
+    paths = {"6": GAME / "ROMIC.ttf", "5": Path("C:/Windows/Fonts/georgia.ttf")}
+
+    def font(sid, units):
+        t = TTFont(str(paths[sid]))
+        k = t["head"].unitsPerEm / (t["OS/2"].usWinAscent + t["OS/2"].usWinDescent)
+        return ImageFont.truetype(str(paths[sid]), max(6, round(units * sy * k)))
+
     text = (GAME / rc.MENU_XML).read_bytes().decode("latin-1")
     strings = Dll(str(GAME / "Language.dll")).strings
     for i, vis, (l, r, t, b) in rects(text):
-        if not vis or i == 6:
-            continue
-        box = (l * sx, t * sy, r * sx, b * sy)
-        d.rectangle(box, outline=(255, 80, 80), width=2)
         sid = re.search(rf'FormIndex="{i}".*?StringTableStart="(\d+)"', text, re.S)
-        if i in (11, 12, 13, 14, 15) and sid:
-            f = ImageFont.truetype("tahomabd.ttf", int((b - t) * sy * 0.6))
-            d.text(((box[0] + box[2]) / 2, (box[1] + box[3]) / 2), strings.get(int(sid.group(1)), "?"),
-                   font=f, fill=(20, 20, 20), anchor="mm")
-    l, r, t, b = rc.MENU_RECT
-    box = (l * sx, t * sy, r * sx, b * sy)
-    f = ImageFont.truetype("tahoma.ttf", int((b - t) * sy * 0.85))
-    line = rc.credit_line("1.0.0")
-    d.text((box[2] + 2, (box[1] + box[3]) / 2 + 2), line, font=f, fill=(0, 0, 0), anchor="rm")
-    d.text((box[2], (box[1] + box[3]) / 2), line, font=f, fill=(236, 222, 186), anchor="rm")
-    d.rectangle(box, outline=(80, 200, 255), width=1)
-    bg.save(PREVIEW / "menu_mock_3440x1440.png")
-    bg.crop((W - 1400, H - 300, W, H)).save(PREVIEW / "menu_mock_corner.png")
+        if vis and i in (11, 12, 13, 14, 15) and sid:
+            d.text(((l + r) / 2 * sx, (t + b) / 2 * sy), strings.get(int(sid.group(1)), "?"),
+                   font=font("6", (b - t) * 0.72), fill=(10, 8, 6), anchor="mm")
+    for (fi, value, (l, r, t, b), fattr, col, sid) in rc.MENU_LABELS:
+        fs = re.search(r'StringID="(\d+)"', fattr).group(1)
+        f = font(fs, b - t)
+        sw = 1 if 'Bold="True"' in fattr else 0
+        x, y = r * sx, (t + b) / 2 * sy
+        s = {rc.MENU_TITLE_ID: rc.MENU_TITLE, rc.MENU_SUB_ID: rc.MENU_SUB}[sid]
+        d.text((x + 2, y + 2), s, font=f, fill=(0, 0, 0), anchor="rm", stroke_width=sw, stroke_fill=(0, 0, 0))
+        d.text((x, y), s, font=f, fill=col, anchor="rm", stroke_width=sw, stroke_fill=col)
+    bg.crop((W - 1500, H - 330, W, H)).save(PREVIEW / "menu_preview_corner.png")
+    bg.save(PREVIEW / "menu_preview_3440x1440.png")
 
 
 def main():

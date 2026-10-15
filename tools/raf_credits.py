@@ -16,11 +16,14 @@ DDS_SIG = b"RAF Remaster by Alexander West, thewest.cc"  # 42 bytes, fits dwRese
 COPYRIGHT_ID = 7209      # main menu copyright line (main menu screen.xml, control 3356)
 CREDITS_TIME_ID = 14012  # credits roll duration in ms (FUN_00b4e4e0 reads 14012..14240)
 CREDITS_FIRST_ID = 14013
-MENU_LINE_ID = 7698      # free in stock + lang-en (block 482; zoom-setting uses 7696/7697/7709/7710)
+MENU_TITLE_ID = 7698     # free in stock + lang-en (block 482; zoom-setting uses 7696/7697/7709/7710)
+MENU_SUB_ID = 7699
+MENU_TITLE = "RISE AND FALL REMASTER"      # ROMIC.ttf (the menu button font): no '/' and no middle dot
+MENU_SUB = f"by {AUTHOR}  \u00b7  {LINK}"   # Georgia has both
 
 
 def credit_line(version: str) -> str:
-    """The one visible line (main menu corner, loading screen bar). Same text in ru and en."""
+    """The loading screen bar line (the menu shows MENU_TITLE / MENU_SUB). Same in ru and en."""
     return f"Rise and Fall Remaster v{version} \u00b7 {LINK}"
 
 
@@ -36,7 +39,7 @@ def menu_line(version: str) -> str:
 
 
 def patch_language_dll(src: Path, dst: Path, version: str, extra=None, credits=True, menu=False) -> None:
-    """Credits strings (credits=True), the main menu line (menu=True, MENU_LINE_ID) plus `extra`
+    """Credits strings (credits=True), the main menu lines (menu=True, MENU_TITLE_ID + MENU_SUB_ID) plus `extra`
     {string id: text} (zoom-setting labels, map texts)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from build_language import Dll
@@ -44,8 +47,9 @@ def patch_language_dll(src: Path, dst: Path, version: str, extra=None, credits=T
     d = Dll(str(src))
     repl = {}
     if credits:
-        cr = d.strings[COPYRIGHT_ID].rstrip()
-        repl[COPYRIGHT_ID] = f"{cr}   {menu_line(version)}"
+        if not menu:  # with menu-credit the stock label (drawn once, under our line) stays stock
+            cr = d.strings[COPYRIGHT_ID].rstrip()
+            repl[COPYRIGHT_ID] = f"{cr}   {menu_line(version)}"
         first = d.strings[CREDITS_FIRST_ID]
         # the roll is parsed (TextParser Advanced): a single slash made "/raf" a format code
         repl[CREDITS_FIRST_ID] = (f"/fs48/fb\n\n\n\nRise and Fall Remaster v{version}\n\n"
@@ -55,7 +59,7 @@ def patch_language_dll(src: Path, dst: Path, version: str, extra=None, credits=T
         except ValueError:
             pass
     if menu:
-        extra = {**(extra or {}), MENU_LINE_ID: credit_line(version)}
+        extra = {**(extra or {}), MENU_TITLE_ID: MENU_TITLE, MENU_SUB_ID: MENU_SUB}
     for sid, text in (extra or {}).items():
         if d.strings.get(sid, text) != text:
             raise SystemExit(f"{src}: string {sid} is already used ({d.strings[sid]!r})")
@@ -65,37 +69,48 @@ def patch_language_dll(src: Path, dst: Path, version: str, extra=None, credits=T
 
 
 MENU_XML = "Data/user interface/main menu screen.xml"
-MENU_INDEX = 16    # the stock form uses 0..15 of NumOfControls="20"
-MENU_VALUE = 3390  # control id, unused in the stock UI files
-# Bottom right, just above the bottom button bar (1100-1150) and below the hidden update button
-# (1175-1575 x 870-950), in the form's 1600 x 1200 design space.
-MENU_RECT = (1090, 1580, 1066, 1092)  # left, right, top, bottom
+# Two right-aligned lines centred in the dark stone band of the menu frame, above the gold meander
+# strip and the bottom button bar (1100-1150). The frame texture 3DU_yMain_Backdrop.dds maps 1:1
+# onto the form's 1600 x 1200 design space (its parchment bar = button rects 1100-1150): stone band
+# 988-1046, meander 1052-1100. Live 2026-10-15 at 3440x1440: the first try (1066-1092) sat on the
+# meander strip. Title in the bar buttons' font (ROMIC, StringID 6, as their Value 47 / Bold /
+# Shadow), sub line in Georgia (StringID 5, Value 80 as the stock civ transition labels).
+# Both overlap the stock copyright label (FormIndex 8, 995-1050), which is never kept on screen
+# (not AlwaysDirty) and keeps its stock text when menu-credit is on.
+GOLD = (228, 194, 128)    # meander gold of the frame texture, a little darker
+PARCH = (196, 180, 146)
+MENU_LABELS = [  # FormIndex, control Value, (left, right, top, bottom), ControlFont attributes, colour, string id
+    (16, 3390, (1100, 1555, 993, 1015),
+     'StringID="6" Value="47" Quality="High" PointSize="36" Bold="True" Shadow="True"', GOLD, MENU_TITLE_ID),
+    (17, 3391, (1100, 1555, 1018, 1036),
+     'StringID="5" Value="80" Quality="High" PointSize="26" Shadow="True"', PARCH, MENU_SUB_ID),
+]
 # Why the stock copyright label (FormIndex 8) never showed, even when moved: LowLevelEngine
 # UIControl::CopyData (0x100b8820) clears a control's dirty flag after one draw unless it is
 # AlwaysDirty (XMLControl attribute -> UIControl+0xda). The menu redraws its 3D scene and movie
 # every frame, so a label drawn once is gone the next frame. The visible bar buttons get the flag
 # from ListBoxAlwaysDirtly (UIButton ctor), the in-game HUD sets AlwaysDirty on 315 controls.
 # TextParser Default = no format codes, so the slash in the link stays one slash.
-MENU_CONTROL = """\t<!--Rise and Fall Remaster credit line (raf-remaster)-->
+MENU_CONTROL = """\t<!--Rise and Fall Remaster credit {n} (raf-remaster)-->
 \t<XMLControl Value="{value}" FormIndex="{index}" TextAlignment="RightJustify" TextParser="Default" AlwaysDirty="True">
 \t\t<ControlEvents NumOfEvents="0"/>
-\t\t<ControlFont StringID="4" Value="36" Quality="High" PointSize="12" Shadow="True" ScaledFontHeight="-1" ScaleFontToFitControl="True"/>
+\t\t<ControlFont {font} ScaledFontHeight="-1" ScaleFontToFitControl="True"/>
 \t\t<ControlBgColor Red="0" Green="0" Blue="0"/>
 \t\t<ControlOffsets LeftOffset="{l}" RightOffset="{r}" TopOffset="{t}" BottomOffset="{b}"/>
 \t\t<SingleLineTextLabel StringTableStart="{sid}">
-\t\t\t<StringColor Red="236" Green="222" Blue="186"/>
+\t\t\t<StringColor Red="{c[0]}" Green="{c[1]}" Blue="{c[2]}"/>
 \t\t</SingleLineTextLabel>
 \t</XMLControl>
 """
 
 
 def menu_control_xml() -> str:
-    l, r, t, b = MENU_RECT
-    return MENU_CONTROL.format(value=MENU_VALUE, index=MENU_INDEX, l=l, r=r, t=t, b=b, sid=MENU_LINE_ID)
+    return "".join(MENU_CONTROL.format(n=n, value=v, index=i, l=r[0], r=r[1], t=r[2], b=r[3], font=f, c=c, sid=s)
+                   for n, (i, v, r, f, c, s) in enumerate(MENU_LABELS, 1))
 
 
 def patch_menu_xml(src: Path, dst: Path) -> None:
-    """Append the credit label to the main menu form (the file the install would otherwise get)."""
+    """Append the credit labels to the main menu form (the file the install would otherwise get)."""
     import re
 
     text = src.read_bytes().decode("latin-1")
@@ -103,11 +118,12 @@ def patch_menu_xml(src: Path, dst: Path) -> None:
     if not m or text.count("</XMLForm>") != 1:
         raise SystemExit(f"{src}: not the main menu form")
     used = {int(i) for i in re.findall(r'FormIndex="(\d+)"', text)}
-    if MENU_INDEX in used or MENU_INDEX >= int(m.group(1)):
-        raise SystemExit(f"{src}: form index {MENU_INDEX} is not free (used {sorted(used)}, "
-                         f"NumOfControls {m.group(1)})")
-    if f'Value="{MENU_VALUE}"' in text:
-        raise SystemExit(f"{src}: control value {MENU_VALUE} already used")
+    for idx, value, *_ in MENU_LABELS:
+        if idx in used or idx >= int(m.group(1)):
+            raise SystemExit(f"{src}: form index {idx} is not free (used {sorted(used)}, "
+                             f"NumOfControls {m.group(1)})")
+        if f'Value="{value}"' in text:
+            raise SystemExit(f"{src}: control value {value} already used")
     nl = "\r\n" if "\r\n" in text else "\n"
     i = text.index("</XMLForm>")
     out = text[:i] + menu_control_xml().replace("\n", nl) + text[i:]
