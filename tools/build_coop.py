@@ -218,11 +218,26 @@ ENDLESS = {
     'intervals': [(5, 150), (10, 135), (15, 120), (20, 110), (10 ** 6, 100)],
     'boss_breather': 30, 'size_cap': 50, 'loop_gap': 100, 'tier_waves': 10, 'tiers': 10,
     'level': lambda k: min(5, 1 + (k - 1) // 4),
+    # difficulty knobs (this map = hard): wave size factor, first siege wave, siege share divisor
+    'scale': 1.0, 'siege_from': 2, 'siege_div': 6,
 }
+# easier variants: smaller waves, siege later and fewer, more time to build up
+ENDLESS_EASY = dict(ENDLESS, map='(4) survival endless easy', pretty='(4) Survival Endless Easy',
+                    title='Survival Endless (Easy)',
+                    help='Co-op endless survival, easy: half-size waves, siege from wave 8, more time '
+                         'between waves. Add exactly one computer player as the enemy.',
+                    first_wave=360, intervals=[(5, 200), (10, 180), (20, 160), (10 ** 6, 140)],
+                    loop_gap=140, scale=0.5, siege_from=8, siege_div=12)
+ENDLESS_NORMAL = dict(ENDLESS, map='(4) survival endless normal', pretty='(4) Survival Endless Normal',
+                      title='Survival Endless (Normal)',
+                      help='Co-op endless survival, normal: smaller waves, siege from wave 4, a little '
+                           'more time between waves. Add exactly one computer player as the enemy.',
+                      first_wave=300, intervals=[(5, 170), (10, 155), (20, 135), (10 ** 6, 115)],
+                      loop_gap=115, scale=0.75, siege_from=4, siege_div=8)
 
 
 def endless_size(theme, k):
-    return min(theme['size_cap'], round(3 + 1.25 * k + 0.03 * k * k))
+    return max(2, round(theme['scale'] * min(theme['size_cap'], round(3 + 1.25 * k + 0.03 * k * k))))
 
 
 def endless_bosses(k):
@@ -330,8 +345,10 @@ def build_endless(m, theme, vocab, opts, map_size):
     tiers = []
     for j in range(1, theme['tiers'] + 1):
         start = t_start + j * theme['tier_waves'] * loop_gap
-        groups = [('sword', 5, 3 + j // 3), ('cavalry', 5, 3 + j // 3), ('archer', 5, 2 + j // 4),
-                  ('ram', 1, 3 + j // 2), ('onager', 1, 3 + j // 2)]
+        sc = theme['scale']
+        groups = [(r, lv, max(1, round(sc * n))) for r, lv, n in
+                  [('sword', 5, 3 + j // 3), ('cavalry', 5, 3 + j // 3), ('archer', 5, 2 + j // 4),
+                   ('ram', 1, 3 + j // 2), ('onager', 1, 3 + j // 2)]]
         te, tused = create_groups(b, 'Tier %d' % j, groups, theme['roster'], vocab, a_spawn, 20)
         te += march(b, 'Tier %d' % j, tused, o_type, o_human_tc)
         b.trigger('SV Endless tier %02d' % j,
@@ -647,6 +664,8 @@ PROBE = {'map': '(4) coop probe', 'pretty': '(4) Coop Probe', 'title': 'Coop pro
 
 MODES = {
     'endless': (ENDLESS, build_endless),
+    'endless-easy': (ENDLESS_EASY, build_endless),
+    'endless-normal': (ENDLESS_NORMAL, build_endless),
     'bosshunt': (BOSSHUNT, build_bosshunt),
     'roles': (ROLES, build_roles),
     'roles-ai': (ROLES_AI, build_roles_ai),
@@ -659,7 +678,7 @@ MODES = {
 def test_schedule(name, theme):
     """LIVE TESTING ONLY: compressed clocks so a test reaches the interesting parts quickly."""
     t = dict(theme, help='TEST SCHEDULE BUILD. ' + theme['help'], lobby=False)
-    if name == 'endless':
+    if name.startswith('endless'):
         t.update(first_wave=30, intervals=[(10 ** 6, 20)], boss_breather=5, size_cap=6,
                  loop_gap=20, tier_waves=2)
     elif name == 'bosshunt':

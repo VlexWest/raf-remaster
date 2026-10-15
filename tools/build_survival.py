@@ -255,10 +255,15 @@ def wave_groups(theme, k, scale=1.0):
         below = [lv for lv in levels if lv <= want]
         return below[-1] if below else levels[0]
 
-    # siege first, so rounding cannot drop it: at least one per siege role, at most a sixth of the wave each
+    # siege first, so rounding cannot drop it: at least one per siege role, at most total/siege_div each
+    # (theme difficulty: no siege before wave siege_from)
+    if k < theme.get('siege_from', 0):
+        mix = {r: w for r, w in mix.items() if r not in SIEGE}
+        wsum = sum(mix.values())
+    div = theme.get('siege_div', 6)
     siege, left = [], total
     for role in [r for r in SIEGE if r in mix]:
-        n = min(left - 1, max(1, min(round(total * mix.pop(role) / wsum), total // 6)))
+        n = min(left - 1, max(1, min(round(total * mix.pop(role) / wsum), total // div)))
         if n > 0:
             siege.append((role, level(role), n))
             left -= n

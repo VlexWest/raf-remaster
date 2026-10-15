@@ -93,7 +93,9 @@ GLYPHS = {
 BADGES = {
     '(4) survival': ('shield', (225, 185, 35)),
     '(4) survival zombies': ('skull', (150, 255, 150)),
-    '(4) survival endless': ('infinity', (225, 185, 35)),
+    '(4) survival endless': ('infinity', (255, 80, 80)),            # hard
+    '(4) survival endless normal': ('infinity', (225, 185, 35)),
+    '(4) survival endless easy': ('infinity', (120, 220, 120)),
     '(4) boss hunt': ('crown', (255, 80, 80)),
     '(4) co-op roles': ('pair', (225, 185, 35)),
     '(4) co-op roles vs ai': ('pair', (255, 80, 80)),
