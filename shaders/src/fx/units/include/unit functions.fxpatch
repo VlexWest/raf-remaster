@@ -1,0 +1,449 @@
+@@ # raf-remaster line script for the stock 'unit functions.fx'.
+@@ # Lines starting with '@@ ' reference the player's stock file; all other lines are ours.
+@@ # Made by tools/make_shader_patch.py, applied by tools/build_shaders.py.
+@@ drop 4 6b19f659
+/*
+ * Unit Functions.fx  (raf-remaster rewrite; replaces the stock file)
+ *
+ * Same entry points as stock (VS_NormalModel, VS_ShadowMapModel, VS_ZOnlyModel,
+ * PS_NormalModel, PS_HighlightModel) and the same effect parameters. What
+ * changed is the math:
+ *   - lighting (light cube or the half-lambert fallback) runs per pixel for
+ *     every unit, not only normal-mapped ones;
+ *   - normal maps use a tangent frame that is skinned with the bones;
+ *   - Blinn-Phong specular per pixel, masked like stock where the material
+ *     has a mask, with a small default where it has none;
+ *   - a gentle rim light on every unit (stock rim only on rim-flagged ones);
+ *   - specular and rim are added in linear light; the base colour, including
+ *     the team colour, is computed exactly as stock.
+ * Position math is shared by all vertex shaders so the z-only pass and the
+ * colour pass of "accurate opacity" produce identical depth (ZFunc EQUAL).
+ */
+
+@@ keep 1 1742b230
+@@ drop 1 01ba4719
+#include "FX\RAF Config.fx"
+@@ keep 4 647a4a5a
+@@ drop 5 2e65b62d
+/* ApplyAxisCap: compress the part of the model beyond the cap planes. */
+@@ keep 3 520cf876
+@@ drop 21 61c777fa
+	float3 theOver  = inPosition - k_AxisCap.xyz;
+	float3 theCapped = k_AxisCap.xyz + theOver * k_AxisCap.w;
+
+	float3 theResult;
+	theResult.x = (inPosition.x > k_AxisCap.x) ? theCapped.x : inPosition.x;
+	theResult.y = (inPosition.y < k_AxisCap.y) ? theCapped.y : inPosition.y;
+	theResult.z = (inPosition.z > k_AxisCap.z) ? theCapped.z : inPosition.z;
+@@ keep 8 3e833fa7
+@@ drop 5 d88004b2
+/* ApplyMorphToTerrain: bilinear height offset over the model's footprint. */
+@@ keep 3 4dc3b864
+@@ drop 19 fe09fbc2
+	float2 theUV = (inPosition - k_MorphToTerrainExtents.xy) * k_MorphToTerrainExtents.zw;
+	float theTop    = lerp(k_MorphToTerrainHeightOffsets[0], k_MorphToTerrainHeightOffsets[1], theUV.x);
+	float theBottom = lerp(k_MorphToTerrainHeightOffsets[2], k_MorphToTerrainHeightOffsets[3], theUV.x);
+	return lerp(theTop, theBottom, theUV.y);
+@@ keep 8 1bb29121
+@@ drop 29 2a1f4156
+ * Bone weights per bone slot. The last used slot takes 1 - sum(previous), as in
+ * stock. Shadow-map and reflected objects use two bones whatever the mesh has.
+ */
+float4
+RafBoneWeights(float4 inBlendWeights)
+{
+	float4 theWeights = float4(inBlendWeights.x, 0.0F, 0.0F, 0.0F);
+@@ keep 2 94bd7ef9
+@@ drop 4 1b265221
+	theWeights.y = 1.0F - inBlendWeights.x;
+@@ keep 1 6190401d
+@@ drop 8 18a1b597
+	theWeights.y = 1.0F - inBlendWeights.x;
+@@ keep 1 c647f832
+@@ drop 18 89bb999d
+	theWeights.y = inBlendWeights.y;
+	theWeights.z = 1.0F - inBlendWeights.x - inBlendWeights.y;
+@@ keep 1 38b2363b
+@@ drop 35 97f8f4ed
+	theWeights.y = inBlendWeights.y;
+	theWeights.z = inBlendWeights.z;
+	theWeights.w = 1.0F - inBlendWeights.x - inBlendWeights.y - inBlendWeights.z;
+#endif
+
+	return theWeights;
+}
+
+#if (k_IsShadowMapObject || k_IsBeingReflected || k_UseBone2Weight)
+	#define RAF_BONE_COUNT 2
+@@ copy 127 1 c647f832
+	#define RAF_BONE_COUNT 3
+@@ copy 146 1 38b2363b
+	#define RAF_BONE_COUNT 4
+#else
+	#define RAF_BONE_COUNT 1
+#endif
+
+/* Skinned position only (shared by every vertex shader). */
+float3
+RafSkinPosition(float3 inPosition, float4 inBlendWeights, float4 inBlendIndices)
+{
+	float4	theWeights = RafBoneWeights(inBlendWeights);
+	int4	theIndices = D3DCOLORtoUBYTE4(inBlendIndices);
+	float4	thePosition = float4(inPosition, 1.0F);
+
+	float3 theResult = mul(thePosition, k_BoneMatrices[theIndices.x]) * theWeights.x;
+#if (RAF_BONE_COUNT >= 2)
+	theResult += mul(thePosition, k_BoneMatrices[theIndices.y]) * theWeights.y;
+#endif
+#if (RAF_BONE_COUNT >= 3)
+	theResult += mul(thePosition, k_BoneMatrices[theIndices.z]) * theWeights.z;
+#endif
+#if (RAF_BONE_COUNT >= 4)
+	theResult += mul(thePosition, k_BoneMatrices[theIndices.w]) * theWeights.w;
+#endif
+	return theResult;
+}
+
+/* Skinned direction (normal, tangent, binormal): rotation part only, not normalised. */
+float3
+RafSkinVector(float3 inVector, float4 inBlendWeights, float4 inBlendIndices)
+{
+	float4	theWeights = RafBoneWeights(inBlendWeights);
+	int4	theIndices = D3DCOLORtoUBYTE4(inBlendIndices);
+
+	float3 theResult = mul(inVector, (float3x3) k_BoneMatrices[theIndices.x]) * theWeights.x;
+#if (RAF_BONE_COUNT >= 2)
+	theResult += mul(inVector, (float3x3) k_BoneMatrices[theIndices.y]) * theWeights.y;
+#endif
+#if (RAF_BONE_COUNT >= 3)
+	theResult += mul(inVector, (float3x3) k_BoneMatrices[theIndices.z]) * theWeights.z;
+#endif
+#if (RAF_BONE_COUNT >= 4)
+	theResult += mul(inVector, (float3x3) k_BoneMatrices[theIndices.w]) * theWeights.w;
+#endif
+@@ keep 7 a97fd8ac
+@@ drop 27 a3a16b26
+ * RafModelPosition: local-space position after skinning, axis cap and terrain
+ * morph. Every vertex shader calls this, so the z-only pass and the colour pass
+ * run the same instructions. Stock skips the axis cap in the z-only pass and
+ * the terrain morph in the shadow pass; inCap / inMorph keep that exactly.
+ */
+float3
+RafModelPosition(in VS_INPUT inVertex, uniform bool inCap, uniform bool inMorph)
+{
+@@ copy 269 1 05a5326e
+	float3 thePosition = inVertex.mPosition.xyz;
+#else
+	float3 thePosition = RafSkinPosition(inVertex.mPosition.xyz, inVertex.mBlendWeights, inVertex.mBlendIndices);
+#endif
+
+#if k_HasCappedAxis
+	if (inCap)
+@@ copy 293 1 e514278a tt,s,s,
+#endif
+
+@@ copy 46 1 fcd31e6b
+	if (inMorph)
+@@ copy 300 1 3c574edf tt,s,s,
+#endif
+
+	return thePosition;
+@@ keep 4 0ef83e67
+@@ drop 4 bd8618ba
+ * RafLightCube: same result as ComputeCubeLighting, written without dynamic
+ * constant indexing so it is cheap in a pixel shader.
+ */
+float3
+RafAmbientLighting(float3 inWorldNormal)
+{
+#if k_UseLightCube
+
+	float3 theSquared = inWorldNormal * inWorldNormal;
+	float3 theX = (inWorldNormal.x < 0.0F) ? k_LightingRegion[1].rgb : k_LightingRegion[0].rgb;
+	float3 theY = (inWorldNormal.y < 0.0F) ? k_LightingRegion[3].rgb : k_LightingRegion[2].rgb;
+	float3 theZ = (inWorldNormal.z < 0.0F) ? k_LightingRegion[5].rgb : k_LightingRegion[4].rgb;
+	return theSquared.x * theX + theSquared.y * theY + theSquared.z * theZ;
+
+#else
+
+	return ComputeStandardLighting(k_LightDirection, inWorldNormal, k_AmbientColor, k_LightColor);
+
+#endif
+}
+
+
+/* Kept for compatibility with the stock helper names. */
+float3
+@@ copy 194 2 75628147
+	return RafAmbientLighting(normalize(inNormal));
+}
+
+@@ keep 3 badc09b6
+@@ drop 8 3c17bd94
+	return normalize(k_CameraPosition - inPosition);
+@@ keep 3 09f93083
+@@ drop 16 89728400
+/* Zero every member of the output so passes without a pixel shader stay valid. */
+VS_OUTPUT
+RafClearOutput()
+{
+@@ copy 265 1 8ffe6416 t,s,
+	theOutput.mPosition		= float4(0.0F, 0.0F, 0.0F, 1.0F);
+@@ copy 492 1 79458c4e t,tt,s,s,s,s,
+@@ copy 441 1 cada0869 t,tt,s,s,s,s,
+	theOutput.mTexCoord0	= float2(0.0F, 0.0F);
+#if k_ApplyFogOfWar
+	theOutput.mTexCoordFOWMask = float2(0.0F, 0.0F);
+#endif
+	theOutput.mWorldNormal	= float3(0.0F, 0.0F, 1.0F);
+	theOutput.mWorldPosition = float3(0.0F, 0.0F, 0.0F);
+@@ copy 314 1 518321ba
+	theOutput.mWorldBinormal = float3(0.0F, 0.0F, 0.0F);
+	theOutput.mWorldTangent	 = float3(0.0F, 0.0F, 0.0F);
+@@ copy 337 1 664cfc8b
+		theOutput.mTexCoordNormalMap = float2(0.0F, 0.0F);
+	#endif
+#endif
+@@ copy 447 1 80676f47 t,ttt,s,
+	return theOutput;
+@@ keep 5 4ab01518
+@@ drop 2 540e796d
+@@ keep 4 a97a0497
+@@ drop 3 b367aa47
+	VS_OUTPUT theOutput = RafClearOutput();
+
+	float3 thePosition = RafModelPosition(inVertex, true, true);
+@@ copy 305 2 e724acfc
+	float3x3 theLocalToWorld = (float3x3) k_LocalToWorld;
+@@ keep 2 52d3f922
+@@ drop 17 ad28e4a6
+	float3 theNormal = inVertex.mNormal.xyz;
+#else
+	float3 theNormal = normalize(RafSkinVector(inVertex.mNormal.xyz, inVertex.mBlendWeights, inVertex.mBlendIndices));
+#endif
+
+	theOutput.mWorldNormal   = mul(theNormal, theLocalToWorld);
+	theOutput.mWorldPosition = mul(float4(thePosition, 1.0F), k_LocalToWorld).xyz;
+
+@@ copy 314 2 a523a91a
+	#if (RAF_UNIT_SKIN_TBN && !k_UseRigidAnimation)
+		float3 theBinormal = RafSkinVector(inVertex.mBinormal, inVertex.mBlendWeights, inVertex.mBlendIndices);
+		float3 theTangent  = RafSkinVector(inVertex.mTangent,  inVertex.mBlendWeights, inVertex.mBlendIndices);
+	#else
+		float3 theBinormal = inVertex.mBinormal;
+		float3 theTangent  = inVertex.mTangent;
+	#endif
+
+	theOutput.mWorldBinormal = mul(theBinormal, theLocalToWorld);
+	theOutput.mWorldTangent  = mul(theTangent,  theLocalToWorld);
+
+@@ copy 337 1 664cfc8b
+@@ copy 340 1 02193802
+	#endif
+@@ keep 3 c8219f86
+@@ drop 15 eb57ec4e
+#if (RAF_UNIT_PERPIXEL || k_IsNormalMapped)
+	/* lighting happens in the pixel shader - raf */
+@@ copy 335 1 cb1c6862
+#else
+	/* stock per-vertex lighting - raf */
+	theOutput.mDiffuse = float4(k_MaterialColor.rgb * RafAmbientLighting(normalize(theOutput.mWorldNormal)), k_MaterialColor.a);
+#endif
+
+@@ copy 361 1 9d09fcd1
+@@ copy 364 1 8860b527
+#endif
+
+@@ copy 376 1 ff70abff t,ss,s,s,s,s,
+@@ copy 381 3 2f5b5ee7
+	theOutput.mTexCoordFOWMask = (theOutput.mWorldPosition.xy * k_FogOfWarUVScaleAndOffset.xy) + k_FogOfWarUVScaleAndOffset.zw;
+#endif
+
+@@ copy 391 1 8ef1965b
+	return theOutput;
+}
+
+
+/*
+ * VS_ShadowMapModel: unchanged behaviour (projected shadow, fixed-function PS).
+ */
+VS_OUTPUT
+@@ copy 404 2 09b1a565
+	VS_OUTPUT theOutput = RafClearOutput();
+
+	float3 thePosition = RafModelPosition(inVertex, true, false);
+@@ keep 2 e724acfc
+@@ drop 6 888d2c72
+@@ copy 435 1 91b8a141
+@@ copy 438 1 25570f42 t,sss,s,s,s,s,
+@@ copy 441 1 cada0869 t,ss,s,s,s,s,
+@@ copy 444 1 fb3eb617
+@@ copy 447 1 80676f47 t,sssssss,s,
+	return theOutput;
+}
+
+
+/*
+ * VS_ZOnlyModel: depth pre-pass for accurate opacity.
+ */
+VS_OUTPUT
+@@ copy 461 2 49337072
+	VS_OUTPUT theOutput = RafClearOutput();
+
+	float3 thePosition = RafModelPosition(inVertex, false, true);
+@@ copy 305 2 e724acfc
+@@ copy 492 1 79458c4e t,sss,s,s,s,s,
+@@ copy 441 1 cada0869 t,ss,s,s,s,s,
+@@ copy 444 1 fb3eb617
+#if k_ApplyFogOfWar
+@@ copy 503 1 5644db3b
+#endif
+@@ copy 447 1 80676f47
+	return theOutput;
+}
+
+
+/*
+ * RafSurface: per-pixel normal and its lighting for the pixel shaders.
+ */
+struct RAF_SURFACE
+{
+	float3	mNormal;		/* normalised world normal */
+	float	mSpecMask;		/* stock-compatible specular amount */
+	float3	mLight;			/* ambient / light-cube colour at the normal (gamma space) */
+};
+
+RAF_SURFACE
+RafComputeSurface(in VS_OUTPUT inVertex, float4 inTexture)
+{
+	RAF_SURFACE theSurface;
+	theSurface.mSpecMask = RAF_UNIT_SPEC_DEFAULT;
+@@ keep 3 64d892c5
+@@ drop 21 ca1b56ea
+@@ keep 1 664cfc8b
+@@ drop 11 b200f90b
+		float2 theNormalMapUV = inVertex.mTexCoordNormalMap;
+	#else
+		float2 theNormalMapUV = inVertex.mTexCoord0;
+	#endif
+
+@@ copy 617 1 9c589d87
+	float3 theBump = (theNormalMap.rgb - 0.5F) * 2.0F;
+
+@@ copy 317 1 2f5697fe
+	theTangentToWorld[0] = inVertex.mWorldBinormal;
+	theTangentToWorld[1] = inVertex.mWorldTangent;
+	theTangentToWorld[2] = inVertex.mWorldNormal;
+	theSurface.mNormal = normalize(mul(theBump, theTangentToWorld));
+
+@@ copy 646 1 0044aab6
+		/* stock mask: (2 * normal map alpha)^2 - raf */
+		theSurface.mSpecMask = 4.0F * theNormalMap.a * theNormalMap.a;
+@@ keep 4 ca36086d
+@@ drop 5 fd964aa0
+	theSurface.mNormal = normalize(inVertex.mWorldNormal);
+@@ keep 3 c8219f86
+@@ drop 174 f603484e
+#if (k_IsSpecular && !k_IsPlayerColor && !k_IsSpecularPerPixel)
+	/* stock mask: (2 * (1 - texture alpha))^2 - raf */
+	theSurface.mSpecMask = 4.0F * (1.0F - inTexture.a) * (1.0F - inTexture.a);
+#endif
+
+	theSurface.mLight = RafAmbientLighting(theSurface.mNormal);
+	return theSurface;
+@@ keep 6 710d7c2b
+@@ drop 3 ae306eb1
+ * PS_HighlightModel: additive selection highlight, same weighting as stock.
+@@ keep 4 f7d43c21
+@@ drop 16 27c2a741
+	float4 theTexture = tex2D(DefaultModelSampler, inVertex.mTexCoord0);
+	float3 theDiffuse = inVertex.mDiffuse.rgb;
+
+#if (RAF_UNIT_PERPIXEL && !k_IsNormalMapped)
+	/* stock lit non-normal-mapped units per vertex; we light them per pixel - raf */
+	theDiffuse *= RafAmbientLighting(normalize(inVertex.mWorldNormal));
+#endif
+
+	float4 theResult;
+	theResult.rgb = theTexture.rgb * theDiffuse * 2.0F * k_HighlightIntensity;
+@@ copy 561 1 26434f4a t,sss,s,s,s,
+@@ keep 8 7599e27f
+@@ drop 2 c9bda721
+@@ keep 4 e226b59b
+@@ drop 11 8f970c74
+	float4 theResult;
+	float4 theTexture = tex2D(DefaultModelSampler, inVertex.mTexCoord0);
+	float  theTextureAlpha = theTexture.a;
+
+#if k_BlackAndWhite
+	theTexture.rgb = dot(theTexture.rgb, k_RafLuminance);
+#endif
+
+#if k_IsPlayerColor
+	/* team colour: exactly the stock formula - raf */
+@@ copy 595 1 e63f6d33
+#endif
+
+#if (RAF_UNIT_PERPIXEL || k_IsNormalMapped)
+	RAF_SURFACE theSurface = RafComputeSurface(inVertex, theTexture);
+	float3 theDiffuse = theSurface.mLight * inVertex.mDiffuse.rgb;
+#else
+	float3 theDiffuse = inVertex.mDiffuse.rgb;
+#endif
+
+	/* modulate 2x, as stock - raf */
+	theResult.rgb = theTexture.rgb * theDiffuse * 2.0F;
+
+#if ((RAF_UNIT_PERPIXEL || k_IsNormalMapped) && !k_IsBeingReflected)
+
+	float3 theLinearAdd = float3(0.0F, 0.0F, 0.0F);
+	float3 theLookAt = normalize(k_CameraPosition - inVertex.mWorldPosition);
+	float3 theLight  = RafSafeNormalize(k_LightDirection * RAF_LIGHT_SIGN);
+	float  theNDotL  = saturate(dot(theSurface.mNormal, theLight));
+	float  theNDotV  = saturate(dot(theSurface.mNormal, theLookAt));
+
+	#if RAF_UNIT_SPEC
+		float3 theHalf  = RafSafeNormalize(theLight + theLookAt);
+		float  thePower = max(k_Shininess, RAF_UNIT_SPEC_POWER_MIN);
+		float  theSpec  = pow(saturate(dot(theSurface.mNormal, theHalf)), thePower) * theNDotL;
+		theLinearAdd += k_SpecularColor * (theSpec * theSurface.mSpecMask);
+	#endif
+
+	#if RAF_UNIT_RIM
+		float theFresnel = pow(1.0F - theNDotV, RAF_UNIT_RIM_POWER);
+@@ copy 724 1 301d8035 tt,s,s,s,
+			/* the material asks for its own rim: stock formula and colour - raf */
+			theLinearAdd += ComputeRimLight(theLight, theSurface.mNormal, theLookAt, k_RimLightColor, k_RimLightPower);
+		#else
+			/* gentle rim, tinted by the lighting around the unit, stronger against the sun - raf */
+			float theBackLit = 0.5F + 0.5F * saturate(dot(-theLight, theLookAt));
+			theLinearAdd += (RAF_UNIT_RIM_AMOUNT * theFresnel * theBackLit) * (theSurface.mLight * theSurface.mLight);
+		#endif
+	#endif
+
+	theResult.rgb = RafAddLinear(theResult.rgb, theLinearAdd);
+@@ keep 3 c8219f86
+@@ drop 142 705bf079
+#if k_ApplyFogOfWar
+@@ copy 672 1 d7bc6148
+	theResult.rgb *= (1.0F - theFOWMask.b);
+@@ copy 676 1 0b942d6a
+#endif
+
+	/* alpha: identical to stock - raf */
+#if k_IsPlayerColor
+@@ copy 683 1 6243a5de
+#elif k_IsSpecular
+@@ copy 683 1 6243a5de
+#else
+@@ copy 701 1 72324d88
+		theResult.a = theTextureAlpha * inVertex.mDiffuse.a;
+	#elif (k_CanAlphaTest || k_AccurateOpacity)
+		theResult.a = theTextureAlpha * inVertex.mDiffuse.a;
+	#else
+		theResult.a = 1.0F;
+	#endif
+#endif
+
+	return theResult;
+}

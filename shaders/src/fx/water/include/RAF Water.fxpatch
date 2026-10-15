@@ -1,0 +1,110 @@
+@@ # raf-remaster line script for the stock 'water functions.fx'.
+@@ # Lines starting with '@@ ' reference the player's stock file; all other lines are ours.
+@@ # Made by tools/make_shader_patch.py, applied by tools/build_shaders.py.
+@@ drop 23 93ce3ffe
+/*
+ * RAF Water.fx  (raf-remaster, not a stock file)
+ *
+ * Appended to the end of the stock "Water Functions.fx" by tools/build_shaders.py,
+ * after the stock PS_AdvancedWater has been renamed to PS_AdvancedWater_Stock.
+ * Used by the two pixel-shader water techniques (AdvancedWaterPerPixelSpecular,
+ * AdvancedWater). The fixed-function Medium/Low techniques are untouched.
+ *
+ * Same inputs, samplers and parameters as stock. Changes:
+ *   - the two bump samples are combined as normals ("whiteout" blend) instead
+ *     of averaged, which keeps the small waves from flattening each other;
+ *   - the per-pixel normal and view vector are normalised in both techniques;
+ *   - Schlick fresnel (F0 = 0.02) raises the reflection toward grazing angles,
+ *     on top of the stock reflection amount and the stock fresnel tint;
+ *   - a tight sun glint (Blinn-Phong) added in linear light, also raising alpha
+ *     so the glint is not lost in the water's transparency.
+ * Shadow, dynamic reflection, opacity and fog behave as stock.
+ */
+
+#include "FX\RAF Config.fx"
+
+
+float4
+@@ copy 292 2 ad8b635b
+	float4	theResult;
+@@ copy 300 1 d4664239 t,t,
+@@ copy 305 1 bf3cea3a t,t,
+
+	float3 theBumpA = tex2D(DefaultWaterBumpSampler, inVertex.mTexCoord0).rgb * 2.0F - 1.0F;
+	float3 theBumpB = tex2D(DefaultWaterBumpSampler, inVertex.mTexCoord1).rgb * 2.0F - 1.0F;
+
+#if RAF_WATER
+	theBumpNormal = normalize(float3(theBumpA.xy + theBumpB.xy, theBumpA.z * theBumpB.z));
+	float2 theScaledBumpOffset = 0.05F * theBumpNormal.xy;		/* the stock offset uses the half-strength average - raf */
+#else
+	theBumpNormal = 0.5F * (theBumpA + theBumpB);
+	float2 theScaledBumpOffset = 0.1F * theBumpNormal.xy;
+#endif
+
+	float4 theShadow = tex2D(DefaultShadowSampler, inVertex.mShadowMap + (0.3F * theScaledBumpOffset));
+
+@@ copy 294 1 3d1772bf t,s,
+@@ copy 326 3 31b86793
+	float3 theWorldNormal = mul(theBumpNormal, theTextureToWorld);
+
+#if RAF_WATER
+@@ copy 337 1 bda46db6 t,s,s,
+	float3 theLookAt = normalize(inVertex.mLookAt.xyz);
+#else
+@@ copy 334 1 46940e00
+@@ copy 337 1 bda46db6
+	float3 theLookAt = inVertex.mLookAt.xyz;
+#endif
+
+	float3 theReflect = reflect(-theLookAt, theWorldNormal);
+	float4 theEnvMap = texCUBE(DefaultWaterEnvCubemapSampler, theReflect);
+
+@@ copy 198 1 95158555
+	float2 theProjected = (0.5F * inVertex.mClipSpacePosition.xy / inVertex.mClipSpacePosition.w) + 0.5F;
+	theProjected.y = 1.0F - theProjected.y;
+	float4 theReflectionMap = tex2D(WaterReflectionSampler, theProjected + theScaledBumpOffset);
+	theReflectionModifier = 1.0F - theReflectionMap.a;
+@@ copy 359 1 e1904fdc t,s,s,s,s,s,
+@@ copy 360 1 9a85d67a
+#else
+@@ copy 365 1 44a79ef7
+#endif
+
+	float theNDotV = saturate(dot(theLookAt, theWorldNormal));
+	float theLighting = max(0.0F, dot(k_LightDirection, theWorldNormal));
+
+#if RAF_WATER
+	float theSchlick = 0.02F + 0.98F * pow(1.0F - theNDotV, 5.0F);
+	float theReflectAmount = saturate(k_AmountEnvMap + (1.0F - k_AmountEnvMap) * RAF_WATER_REFL_BOOST * theSchlick);
+	theResult.rgb = (theReflectAmount * theEnvMap.rgb) + (k_AmountDiffuse * (1.0F - theSchlick) * inVertex.mDiffuse.rgb);
+#else
+@@ copy 373 1 e312f3ff
+#endif
+@@ copy 376 2 4744d6c6
+	/* stock fresnel tint (also raises opacity at grazing angles) - raf */
+	float theFresnel = pow(1.0F - theNDotV, k_FresnelPower);
+	theResult += theFresnel * k_WaterColorFresnel;
+
+@@ copy 334 2 7c669be4
+@@ copy 389 1 6f9fad13
+		theResult.rgb += theReflectionModifier * ComputeSpecular(k_LightDirection, theWorldNormal, theLookAt);
+@@ keep 3 d56239af
+@@ drop 379 1cb34ed2
+		theResult.rgb += theReflectionModifier * theLighting * inVertex.mSpecular.rgb;
+	}
+
+#if RAF_WATER
+	{
+		float3 theLight = RafSafeNormalize(k_LightDirection * RAF_LIGHT_SIGN);
+		float3 theHalf  = RafSafeNormalize(theLight + theLookAt);
+		float  theGlint = pow(saturate(dot(theWorldNormal, theHalf)), RAF_WATER_GLINT_POWER) *
+						  saturate(4.0F * dot(theWorldNormal, theLight)) * RAF_WATER_GLINT_AMOUNT;
+		float3 theGlintColor = k_SpecularColor * (theGlint * theReflectionModifier * theShadow.r);
+		theResult.rgb = RafAddLinear(theResult.rgb, theGlintColor);
+		theResult.a = saturate(theResult.a + dot(theGlintColor, k_RafLuminance));
+	}
+#endif
+
+@@ copy 401 1 bc1acb87
+	return theResult;
+}

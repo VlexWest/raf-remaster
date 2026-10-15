@@ -13,12 +13,22 @@ python tools/check_shaders.py "D:/Games/RAF-remaster" work/overlay-shaders --out
 python tools/shader_cache.py "D:/Games/RAF-remaster/shader.cache"                      # what the engine compiled
 ```
 
-- `build_shaders.py` reads the stock `.fx` files from `<game>/Data` and applies `shaders/edits.json`. It writes `<out>/Data/fx/...` and `<out>/shader-manifest.json`, which records the stock and output sha256 of every file. It refuses to write inside the game folder. Patch anchors must match an exact number of times. Replaced files must match the stock sha256 they were written for. Either failure stops the build (tested by changing a fake stock copy).
+- `build_shaders.py` reads the stock `.fx` files from `<game>/Data` and applies `shaders/edits.json`. It writes `<out>/Data/fx/...` and `<out>/shader-manifest.json`, which records the stock and output sha256 of every file. It refuses to write inside the game folder. Patch anchors must match an exact number of times. Line scripts check a hash of every stock line they keep, drop or copy, and must cover the whole stock file; patched unit files also check the stock sha256 they were written for. Any failure stops the build (`python tools/test_shader_patch.py` changes a stock line and expects the failure).
 - `check_shaders.py` runs every offline test (details below). It needs a 32-bit Python because `d3dx9_27.dll` is 32-bit. It finds one through `uv python find cpython-3.12-windows-x86-none` (installed once with `uv python install cpython-3.12-windows-x86-none`) or the `RAF_PY32` variable. It exits 1 on any failure.
-- **Install:** back up the 7 existing files listed under "patch/replace" in the manifest from `D:\Games\RAF-remaster\Data\fx`. Then copy `work/overlay-shaders/Data` over `D:\Games\RAF-remaster\Data`.
-- **Revert:** restore those 7 files and delete the 3 added files: `fx/RAF Config.fx`, `fx/terrain/include/RAF Terrain.fx` and `fx/water/include/RAF Water.fx`. `shader.cache` stores only defines and a permutation list, not bytecode (see the engine facts below), so it most likely does not need to be touched.
+- **Install:** back up the 7 existing files listed under "patch" in the manifest from `D:\Games\RAF-remaster\Data\fx`. Then copy `work/overlay-shaders/Data` over `D:\Games\RAF-remaster\Data`.
+- **Revert:** restore those 7 files and delete the 3 added files: `fx/RAF Config.fx`, `fx/terrain/include/RAF Terrain.fx` and `fx/water/include/RAF Water.fx`. `shader.cache` stores only defines and a permutation list, not bytecode (see the engine notes below), so it probably does not need to be touched.
 
-The repo holds no stock shader. `shaders/src` holds only our own files: two replacements and three new files. `shaders/edits.json` holds short anchors such as `compile PS_VERSION `.
+The repo holds no stock shader code. `shaders/edits.json` holds short anchors such as `compile PS_VERSION `. `shaders/src` holds `RAF Config.fx` (entirely ours) and four line scripts (`*.fxpatch`): the two unit include files, and `RAF Terrain.fx` / `RAF Water.fx`, which are new files derived from the stock terrain and water pixel shaders. A line script holds only our lines; stock lines are referenced, never copied:
+
+```
+@@ keep 5 04df9bd3         next 5 stock lines unchanged
+@@ drop 57 3578c9cf        skip the next 57 stock lines
+@@ copy 29 2 a523a91a      stock lines 29-30, from anywhere in the file
+@@ copy 265 1 8ffe6416 t,s,  stock line 265 re-spaced: tab, word, space, word
+our line                   any other line is emitted as written
+```
+
+The hash is the first 8 hex digits of the sha256 of the stock lines covered. To change one of these files, build, edit the built file outside the repo, then regenerate the script with `python tools/make_shader_patch.py <stock .fx> <edited .fx> shaders/src/<path>.fxpatch` (it checks the round trip). `python tools/shader_overlap.py <game>` counts the lines under `shaders/` that also occur in any stock `.fx`: 1 of 363 lines of 20 or more characters (`theOutput.mTexCoord0 = float2(0.0F, 0.0F);`, which stock has only in the terrain file); at 8 or more characters, 29 of 413, all idioms such as `return theResult;` and `#if k_ApplyFogOfWar`.
 
 ## Engine facts that shaped the design
 
@@ -40,7 +50,7 @@ Design consequences:
 
 ## What changed, per shader
 
-### Units: `fx/units/normal unit.fx` (patched), `units/include/unit functions.fx` + `unit data structures.fx` (replaced by ours)
+### Units: `fx/units/normal unit.fx` (patched), `units/include/unit functions.fx` + `unit data structures.fx` (rewritten, line scripts)
 
 | | Stock | Now |
 |---|---|---|

@@ -1,0 +1,108 @@
+@@ # raf-remaster line script for the stock 'terrain functions.fx'.
+@@ # Lines starting with '@@ ' reference the player's stock file; all other lines are ours.
+@@ # Made by tools/make_shader_patch.py, applied by tools/build_shaders.py.
+@@ drop 329 5651e5ec
+/*
+ * RAF Terrain.fx  (raf-remaster, not a stock file)
+ *
+ * Appended to the end of the stock "Terrain Functions.fx" by tools/build_shaders.py,
+ * after the stock PS_DefaultTerrainBumpmap has been renamed to
+ * PS_DefaultTerrainBumpmap_Stock. The techniques in "Default Terrain.fx" call
+ * PS_DefaultTerrainBumpmap(...) and so pick up this version.
+ *
+ * Same inputs, outputs, samplers and parameters as stock. Additions:
+ *   - relief: the bump map's normal lights the albedo per pixel, as a ratio to the
+ *     flat surface, so the lighting baked into the terrain mask is kept on average;
+ *   - detail: a second, rotated and scaled sample of the same tile texture modulates
+ *     brightness to hide tiling (no new texture needed).
+ * Fog (fixed function), shadow map, layer alpha, rim, glow and specular are as stock.
+ */
+
+#include "FX\RAF Config.fx"
+
+/* rotation of the detail sample: about 37 degrees - raf */
+static const float2x2 k_RafDetailRotation = float2x2(0.7986F, -0.6018F, 0.6018F, 0.7986F);
+
+
+@@ keep 5 8bd65dd2
+@@ drop 1 5d1fa06d
+	float2	theDetailUV;
+@@ keep 2 dda028b6
+@@ drop 19 9c8de476
+
+	if (inRemapUV)
+	{
+		/* tri-planar mapping weighted by the squared normal - as stock */
+		float3 theWeights = inVertex.mWorldNormal;
+		float2 theA = inVertex.mWorldPosition.xy;
+		float2 theB = inVertex.mWorldPosition.xz;
+		float2 theC = inVertex.mWorldPosition.yz;
+		theTiled = tex2D(DefaultTiledSampler, theA) * theWeights.z +
+				   tex2D(DefaultTiledSampler, theB) * theWeights.y +
+				   tex2D(DefaultTiledSampler, theC) * theWeights.x;
+		theDetailUV = theA;
+@@ keep 3 d56239af
+@@ drop 1 54c2264e
+@@ keep 1 90e3cb2c
+@@ drop 3 eaf3c7f7
+		theDetailUV = inVertex.mTexCoord0;
+	}
+
+#if RAF_TERRAIN_DETAIL
+	{
+		/* brightness of a far, rotated sample relative to the texture's mean colour - raf */
+		float3 theFar  = tex2D(DefaultTiledSampler, mul(theDetailUV, k_RafDetailRotation) * RAF_TERRAIN_DETAIL_SCALE + float2(0.31F, 0.57F)).rgb;
+		float3 theMean = tex2Dbias(DefaultTiledSampler, float4(theDetailUV, 0.0F, 16.0F)).rgb;
+		float  theRatio = dot(theFar, k_RafLuminance) / max(dot(theMean, k_RafLuminance), 0.02F);
+		theTiled.rgb *= lerp(1.0F, clamp(theRatio, 0.6F, 1.4F), RAF_TERRAIN_DETAIL_AMOUNT);
+	}
+#endif
+
+@@ keep 4 381c408d
+@@ drop 4 69d9d30e
+	theResult.rgb = theTiled.rgb * theMask.rgb * k_TextureMultiplier;
+
+	float3 theBumpNormal = (theBump.rgb - 0.5F) * 2.0F;
+
+#if RAF_TERRAIN_RELIEF
+	{
+		/* per-pixel N.L of the bumped normal against the flat one - raf */
+		float3 theLight = RafSafeNormalize(inVertex.mTextureLight * RAF_LIGHT_SIGN);
+		float3 theNormal = normalize(float3(theBumpNormal.x, theBumpNormal.y * RAF_TERRAIN_BUMP_YSIGN, theBumpNormal.z));
+		float  theBumped = saturate(dot(theNormal, theLight));
+		float  theFlat   = max(saturate(theLight.z), 0.25F);
+		float  theRelief = clamp(theBumped / theFlat, 0.45F, 1.6F);
+		/* no relief where the sun is missing (unset light gives a zero vector) */
+		theRelief = lerp(1.0F, theRelief, saturate(dot(theLight, theLight)));
+		theResult.rgb *= lerp(1.0F, theRelief, RAF_TERRAIN_RELIEF_AMOUNT);
+	}
+#endif
+
+@@ keep 3 9b277838
+@@ drop 2 99009976
+@@ keep 2 36f5a2e0
+@@ drop 4 0594c3b8
+@@ keep 2 019bacb0
+@@ drop 1 01ba4719
+@@ keep 3 c9e942b9
+@@ drop 8 d3c577db
+	theSpecularMask = pow(theShadowAmount, 4.0F) * theBump.a;
+#else
+@@ keep 1 17dbede1
+@@ drop 4 84d5e781
+#endif
+
+@@ keep 1 87cc07ba
+@@ drop 5 df28a766
+	theResult.rgb += inVertex.mGlow.rgb * theBump.a;
+@@ keep 2 ea230f1d
+@@ drop 4 283d6e62
+	if (inUseTileAlpha)
+	{
+@@ keep 4 7d4b95c3
+@@ drop 1 2ae70819
+@@ keep 2 ae542d78
+@@ drop 4 e4e107c0
+
+	return theResult;
+}

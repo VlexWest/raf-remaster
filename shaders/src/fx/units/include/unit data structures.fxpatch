@@ -1,0 +1,58 @@
+@@ # raf-remaster line script for the stock 'unit data structures.fx'.
+@@ # Lines starting with '@@ ' reference the player's stock file; all other lines are ours.
+@@ # Made by tools/make_shader_patch.py, applied by tools/build_shaders.py.
+@@ drop 3 38258faf
+/*
+ * Unit Data Structures.fx  (raf-remaster rewrite; replaces the stock file)
+ *
+ * VS_INPUT is the engine's vertex layout and must stay byte-for-byte the same
+ * in members, semantics and #if conditions. VS_OUTPUT is private to the effect
+ * (vertex shader to pixel shader) and is re-laid-out for per-pixel lighting.
+ */
+
+#include "FX\RAF Config.fx"
+
+
+/*
+ * Result of skinning. Tangent and binormal are only filled for normal-mapped
+ * permutations.
+@@ keep 5 04df9bd3
+@@ copy 32 1 0a8e2558 t,t,t,s,
+@@ copy 31 1 7e07e5aa t,t,t,s,
+@@ keep 4 c039c8df
+@@ drop 1 99ed8dc9
+ * Vertex data declaration (engine interface, unchanged).
+@@ keep 10 288f1de5
+@@ drop 1 df1f66cd
+
+@@ keep 21 57714f18
+ *
+ * COLOR0 and TEXCOORD0 keep their stock meaning because the shadow-map and
+ * z-only passes have no pixel shader and feed them to fixed-function stages.
+ * The fixed TEXCOORD slots below do not depend on other flags any more.
+@@ keep 3 d7f9ddf1
+@@ drop 4 b64c8580
+@@ copy 49 1 7b165980 t,t,tt,s,
+	float4	mDiffuse		: COLOR0;		/* material colour (x vertex colour), alpha as stock */
+	float4	mSpecular		: COLOR1;		/* kept for the fixed-function passes, unused by our PS */
+@@ copy 21 1 8491ef21
+@@ keep 3 efce9a7f
+@@ drop 57 3578c9cf
+@@ copy 56 1 b2b11315 t,t,t,s,
+
+#endif
+
+	float3	mWorldNormal	: TEXCOORD2;	/* world normal (unnormalised) */
+	float3	mWorldPosition	: TEXCOORD3;
+
+@@ copy 29 2 a523a91a
+	float3	mWorldBinormal	: TEXCOORD4;	/* tangent-to-world row 0 */
+	float3	mWorldTangent	: TEXCOORD5;	/* tangent-to-world row 1 */
+
+@@ copy 23 1 ec55c904 t,s,
+
+		float2	mTexCoordNormalMap	: TEXCOORD6;
+@@ keep 5 fb3c1de3
+@@ drop 2 2b8f52b4
+	float	mFog			: FOG;
+};
