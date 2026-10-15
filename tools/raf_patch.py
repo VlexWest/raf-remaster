@@ -563,7 +563,7 @@ FEATURES = {
     "maps": False,
     "survival": True,
     "survival-probe": False,
-    "coop-modes": False,  # five co-op maps; off until tested in game (docs/coop-modes.md)
+    "coop-modes": True,  # five co-op maps (docs/coop-modes.md); in-game tests pending
     "lang-en": False,
     "credits": True,
     "openspy": False,
