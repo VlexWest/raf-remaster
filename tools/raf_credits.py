@@ -1,6 +1,6 @@
 """Remaster credits: menu line, credits roll section, loading screen, hidden signatures.
 
-Used by raf_patch.py (feature `credits`). Everything is written into work/overlay-credits from the
+Used by raf_patch.py (features `credits` and `menu-credit`; tests: tools/test_credits.py). Everything is written into work/overlay-credits from the
 files the install would otherwise get (stock or the English pack), so revert stays exact.
 """
 
@@ -16,6 +16,18 @@ DDS_SIG = b"RAF Remaster by Alexander West, thewest.cc"  # 42 bytes, fits dwRese
 COPYRIGHT_ID = 7209      # main menu copyright line (main menu screen.xml, control 3356)
 CREDITS_TIME_ID = 14012  # credits roll duration in ms (FUN_00b4e4e0 reads 14012..14240)
 CREDITS_FIRST_ID = 14013
+MENU_LINE_ID = 7698      # free in stock + lang-en (block 482; zoom-setting uses 7696/7697/7709/7710)
+
+
+def credit_line(version: str) -> str:
+    """The one visible line (main menu corner, loading screen bar). Same text in ru and en."""
+    return f"Rise and Fall Remaster v{version} \u00b7 {LINK}"
+
+
+def esc(text: str) -> str:
+    """Escape for the Basic/Advanced text parser (LowLevelEngine UITOPGETextParser::ParseGEText):
+    every '/' starts a format code (/r255, /fb ...), '//' is a literal slash."""
+    return text.replace("/", "//")
 
 
 def menu_line(version: str) -> str:
@@ -23,8 +35,9 @@ def menu_line(version: str) -> str:
     return f"Remastered by {AUTHOR} | {LINK} | v{version}"
 
 
-def patch_language_dll(src: Path, dst: Path, version: str, extra=None, credits=True) -> None:
-    """Credits strings (credits=True) plus `extra` {string id: text} (zoom-setting labels)."""
+def patch_language_dll(src: Path, dst: Path, version: str, extra=None, credits=True, menu=False) -> None:
+    """Credits strings (credits=True), the main menu line (menu=True, MENU_LINE_ID) plus `extra`
+    {string id: text} (zoom-setting labels, map texts)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from build_language import Dll
 
@@ -34,12 +47,15 @@ def patch_language_dll(src: Path, dst: Path, version: str, extra=None, credits=T
         cr = d.strings[COPYRIGHT_ID].rstrip()
         repl[COPYRIGHT_ID] = f"{cr}   {menu_line(version)}"
         first = d.strings[CREDITS_FIRST_ID]
+        # the roll is parsed (TextParser Advanced): a single slash made "/raf" a format code
         repl[CREDITS_FIRST_ID] = (f"/fs48/fb\n\n\n\nRise and Fall Remaster v{version}\n\n"
-                                  f"/fs28Remastered by\n/fs24  {AUTHOR}\n/fs24  {LINK}\n\n\n\n") + first
+                                  f"/fs28Remastered by\n/fs24  {AUTHOR}\n/fs24  {esc(LINK)}\n\n\n\n") + first
         try:
             repl[CREDITS_TIME_ID] = str(int(d.strings[CREDITS_TIME_ID]) + 15000)
         except ValueError:
             pass
+    if menu:
+        extra = {**(extra or {}), MENU_LINE_ID: credit_line(version)}
     for sid, text in (extra or {}).items():
         if d.strings.get(sid, text) != text:
             raise SystemExit(f"{src}: string {sid} is already used ({d.strings[sid]!r})")
@@ -49,17 +65,54 @@ def patch_language_dll(src: Path, dst: Path, version: str, extra=None, credits=T
 
 
 MENU_XML = "Data/user interface/main menu screen.xml"
-COPYRIGHT_OFFSETS_OLD = '<ControlOffsets LeftOffset="0" RightOffset="1600" TopOffset="995" BottomOffset="1050"/>'
-# The stock copyright label sits behind the menu frame; move it just above the bottom bar.
-COPYRIGHT_OFFSETS_NEW = '<ControlOffsets LeftOffset="0" RightOffset="1600" TopOffset="922" BottomOffset="962"/>'
+MENU_INDEX = 16    # the stock form uses 0..15 of NumOfControls="20"
+MENU_VALUE = 3390  # control id, unused in the stock UI files
+# Bottom right, just above the bottom button bar (1100-1150) and below the hidden update button
+# (1175-1575 x 870-950), in the form's 1600 x 1200 design space.
+MENU_RECT = (1090, 1580, 1066, 1092)  # left, right, top, bottom
+# Why the stock copyright label (FormIndex 8) never showed, even when moved: LowLevelEngine
+# UIControl::CopyData (0x100b8820) clears a control's dirty flag after one draw unless it is
+# AlwaysDirty (XMLControl attribute -> UIControl+0xda). The menu redraws its 3D scene and movie
+# every frame, so a label drawn once is gone the next frame. The visible bar buttons get the flag
+# from ListBoxAlwaysDirtly (UIButton ctor), the in-game HUD sets AlwaysDirty on 315 controls.
+# TextParser Default = no format codes, so the slash in the link stays one slash.
+MENU_CONTROL = """\t<!--Rise and Fall Remaster credit line (raf-remaster)-->
+\t<XMLControl Value="{value}" FormIndex="{index}" TextAlignment="RightJustify" TextParser="Default" AlwaysDirty="True">
+\t\t<ControlEvents NumOfEvents="0"/>
+\t\t<ControlFont StringID="4" Value="36" Quality="High" PointSize="12" Shadow="True" ScaledFontHeight="-1" ScaleFontToFitControl="True"/>
+\t\t<ControlBgColor Red="0" Green="0" Blue="0"/>
+\t\t<ControlOffsets LeftOffset="{l}" RightOffset="{r}" TopOffset="{t}" BottomOffset="{b}"/>
+\t\t<SingleLineTextLabel StringTableStart="{sid}">
+\t\t\t<StringColor Red="236" Green="222" Blue="186"/>
+\t\t</SingleLineTextLabel>
+\t</XMLControl>
+"""
+
+
+def menu_control_xml() -> str:
+    l, r, t, b = MENU_RECT
+    return MENU_CONTROL.format(value=MENU_VALUE, index=MENU_INDEX, l=l, r=r, t=t, b=b, sid=MENU_LINE_ID)
 
 
 def patch_menu_xml(src: Path, dst: Path) -> None:
+    """Append the credit label to the main menu form (the file the install would otherwise get)."""
+    import re
+
     text = src.read_bytes().decode("latin-1")
-    if text.count(COPYRIGHT_OFFSETS_OLD) != 1:
-        raise SystemExit(f"{src}: copyright label offsets not found")
+    m = re.search(r'<XMLForm ID="12" NumOfControls="(\d+)"', text)
+    if not m or text.count("</XMLForm>") != 1:
+        raise SystemExit(f"{src}: not the main menu form")
+    used = {int(i) for i in re.findall(r'FormIndex="(\d+)"', text)}
+    if MENU_INDEX in used or MENU_INDEX >= int(m.group(1)):
+        raise SystemExit(f"{src}: form index {MENU_INDEX} is not free (used {sorted(used)}, "
+                         f"NumOfControls {m.group(1)})")
+    if f'Value="{MENU_VALUE}"' in text:
+        raise SystemExit(f"{src}: control value {MENU_VALUE} already used")
+    nl = "\r\n" if "\r\n" in text else "\n"
+    i = text.index("</XMLForm>")
+    out = text[:i] + menu_control_xml().replace("\n", nl) + text[i:]
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_bytes(text.replace(COPYRIGHT_OFFSETS_OLD, COPYRIGHT_OFFSETS_NEW).encode("latin-1"))
+    dst.write_bytes(out.encode("latin-1"))
 
 
 def stamp_loadscreen(src: Path, dst: Path, version: str) -> None:
@@ -82,6 +135,42 @@ def stamp_loadscreen(src: Path, dst: Path, version: str) -> None:
         w, h = draw.textbbox((0, 0), line, font=font)[2:]
         y -= h + 1
         draw.text((im.width - w - 14, y), line, font=font, fill=(96, 56, 24))
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    im.save(dst, "BMP")
+
+
+BAR_H = 30                 # px added below the stock 640 x 480 picture
+BAR_BG = (16, 11, 6)
+BAR_LINE = (176, 136, 64)  # thin gold rule, the colour of the picture's meander border
+BAR_TEXT = (236, 214, 160)
+
+
+def loadscreen_bar(src: Path, dst: Path, version: str) -> None:
+    """Startup splash with a dark bar below the stock picture carrying credit_line().
+
+    The splash is a popup the size of the bitmap (FUN_00709xxx: LoadImageA("loadscreen.bmp"),
+    CreateWindowExA with the bitmap's width/height, WndProc 0x709680 paints with one BitBlt);
+    nothing else is drawn on it, so a taller bitmap makes the window taller and covers no stock art."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    pic = Image.open(src).convert("RGB")
+    w, h = pic.size
+    im = Image.new("RGB", (w, h + BAR_H), BAR_BG)
+    im.paste(pic, (0, 0))
+    draw = ImageDraw.Draw(im)
+    draw.line([(0, h), (w - 1, h)], fill=BAR_LINE, width=1)
+    text = credit_line(version)
+    font = None
+    for name in ("georgia.ttf", "times.ttf", "arial.ttf"):
+        try:
+            font = ImageFont.truetype(name, 16)
+            break
+        except OSError:
+            pass
+    font = font or ImageFont.load_default()
+    x0, y0, x1, y1 = draw.textbbox((0, 0), text, font=font)
+    draw.text(((w - (x1 - x0)) // 2 - x0, h + 1 + (BAR_H - 1 - (y1 - y0)) // 2 - y0), text,
+              font=font, fill=BAR_TEXT)
     dst.parent.mkdir(parents=True, exist_ok=True)
     im.save(dst, "BMP")
 

@@ -20,6 +20,8 @@ Features (see FEATURES; `features` prints them with their default):
   ai-hard, ai-personalities, unit-ai, maps, survival, coop-modes
                                        gameplay data (all players need the same set: REMASTER.txt)
   lang-en                              English language pack (needs work/lang/en.json, not in the repo)
+  credits, menu-credit                 credits roll, Language.dll lines, splash credit; menu-credit
+                                       adds the main menu corner line + splash bar (needs credits)
 --mutator <name> installs work/overlay-mutators/<name> last (one at a time, gameplay data);
 --mutator none removes it.
 Always installed: LAA flag, DXVK, no intro movies, start/host/join scripts, REMASTER.txt.
@@ -592,6 +594,7 @@ FEATURES = {
     "coop-modes": True,  # five co-op maps (docs/coop-modes.md); in-game tests pending
     "lang-en": False,
     "credits": True,
+    "menu-credit": False,  # main menu line + loading screen bar (raf_credits); off until tested in game
     "openspy": False,
     "click-fix": True,  # Resume a suspended mouse/keyboard each frame; live-tested 2026-10-15
 }
@@ -613,8 +616,9 @@ def build_credits(feats: list, stock: Path) -> None:
 
     out = WORK / "overlay-credits"
     shutil.rmtree(out, ignore_errors=True)
-    # the copyright label (Language.dll 7209, carries our line) is not drawn on the 3D main menu even
-    # when moved (rc.patch_menu_xml, tested): the line shows where the game uses 7209 elsewhere
+    # the stock copyright label (Language.dll 7209, carries our line) is drawn once and then covered
+    # by the menu's per-frame 3D scene (not AlwaysDirty, see rc.MENU_CONTROL); menu-credit adds a
+    # label that is redrawn every frame
     lang = OVERLAYS["lang-en"].root / "Language.dll" if "lang-en" in feats else stock / "Language.dll"
     extra = {}
     if "zoom-setting" in feats:
@@ -626,12 +630,21 @@ def build_credits(feats: list, stock: Path) -> None:
         import map_texts
 
         extra = {**extra, **map_texts.string_repl("en" if "lang-en" in feats else "ru")}
+    menu = "credits" in feats and "menu-credit" in feats
     rc.patch_language_dll(lang, out / "Language.dll", REMASTER_VERSION, extra=extra,
-                          credits="credits" in feats)
+                          credits="credits" in feats, menu=menu)
     if "credits" not in feats:
         print(f"Language.dll: {len(extra)} zoom-setting / map strings (credits off)")
         return
-    rc.stamp_loadscreen(stock / "loadscreen.bmp", out / "loadscreen.bmp", REMASTER_VERSION)
+    if menu:
+        # a credit label the menu redraws every frame (AlwaysDirty), on the stock or lang-en form
+        xml = OVERLAYS["lang-en"].root / rc.MENU_XML if "lang-en" in feats else stock / rc.MENU_XML
+        if not xml.exists():
+            xml = stock / rc.MENU_XML
+        rc.patch_menu_xml(xml, out / rc.MENU_XML)
+        rc.loadscreen_bar(stock / "loadscreen.bmp", out / "loadscreen.bmp", REMASTER_VERSION)
+    else:
+        rc.stamp_loadscreen(stock / "loadscreen.bmp", out / "loadscreen.bmp", REMASTER_VERSION)
     n = 0
     # DDS textures are NOT signed: a signature in DDS_HEADER.dwReserved1 made textures fail to load
     # (black main menu in the live test), so the generated textures keep the stock zeros there.
@@ -639,7 +652,7 @@ def build_credits(feats: list, stock: Path) -> None:
         n += sum(rc.stamp_text(p, rc.SIGNATURE) for p in OVERLAYS["shaders"].files().values())
     if "unit-ai" in feats and OVERLAYS["unit-ai"].built():
         n += sum(rc.stamp_text(p, rc.SIGNATURE) for p in OVERLAYS["unit-ai"].files().values())
-    print(f"credits: menu line, credits roll, loading screen built; {n} files signed")
+    print(f"credits: credits roll, loading screen{', main menu line' if menu else ''} built; {n} files signed")
 
 
 def pick_adapter(prefix):
