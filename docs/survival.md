@@ -126,8 +126,8 @@ Sword and Spear Infantry only (melee), size x1.4 of classic, first horde at 3:00
 | 15 | 29:50 | 60 (solo 40) | 22 sword, 18 spear (L4) | 3 x The Minotaur |
 | 20 | 38:20 | 84 (solo 56) | 31 sword, 25 spear (L5) | 4 x The Minotaur |
 
-(Full table: `--table`.) In-game texts are English and plain ASCII, because the Russian install
-renders cp1251 (no umlauts).
+(Full table: `--table`.) In-game texts are Russian (cp1251, like the stock Russian scenarios) by
+default and English with `--lang en`; see section 8.
 
 ## 3. Build, install, start
 
@@ -239,7 +239,7 @@ failure line says what it means.
   stays empty. Terrain at the centre of Plains is not checked for passability (probe map).
 * Pop cap of the computer is not raised; if creation hits a cap, waves shrink (probe 4/7).
 * Two or more computers multiply every wave (each gets a copy).
-* Texts are English; the lobby name/help comes from the .rmv `DisplayHelp` (unverified).
+* One language per build for the in-game texts (section 8).
 
 More co-op maps built on the same trigger layer (Endless, Boss Hunt, Roles, vs Hard AI):
 `docs/coop-modes.md`.
@@ -247,5 +247,71 @@ More co-op maps built on the same trigger layer (Endless, Boss Hunt, Roles, vs H
 ## 7. Files
 
 `tools/raf_scn.py` (format), `tools/build_survival.py` (generator, themes), `tools/check_survival.py`
-(all offline checks + stub engine + negative tests), `docs/scenario-format.md`, this file.
+(all offline checks + stub engine + negative tests), `tools/map_texts.py` (every player-visible
+text, ru + en), `tools/map_preview.py` (lobby picture + movie), `docs/scenario-format.md`, this file.
 The overlay (`work/overlay-survival`) is generated and not committed.
+
+## 8. Lobby texts, in-game language, lobby pictures (all seven maps)
+
+Applies to the two survival maps and the five co-op maps (docs/coop-modes.md).
+
+### Where the lobby gets name, help and picture (RiseAndFall.exe v1.15, decompile)
+
+| what | source | evidence |
+|---|---|---|
+| map list | every `Data\map scripts\*.rmv`; keys `UseMapGenerator`, `TextureName`, `StringTableID`, `StringHelpID`, `DisplayHelp`, `DisplayName` | FUN_00bcd8f0 (strings 0xc921d4..0xc9221c, keyword table set up at 0xc41381) |
+| name | `StringTableID` -> Language.dll string; else `DisplayName`; default = file name in title case. A missing id falls back to "<Name>.scn" | same function; stock `(4) plains.rmv`: `StringTableID 27032` = "(4) Равнины" |
+| help (hover text) | `StringHelpID` -> Language.dll; else `DisplayHelp`. Shown as the map button's help string in the lobby help box (738x153 of 1600x1200, 18 pt) | FUN_00b9e000 -> FUN_00bc8150 (entry +0x60); stock 630 = "(4) /fbРавнины/fd - ..." (stock help texts: at most 311 chars, 2 line breaks) |
+| still picture | `textures\<TextureName>` (default = the .rmv name), fallback `textures\DefaultRandomMap` (= `defaultrandommap.sst`, the "?" we saw) | FUN_00bc87d0, string "DefaultRandomMap" at 0xc91f84; stock files `Data\textures\(4) plains.tga` etc.: 256x256, 32 bit, uncompressed, bottom-up, picture in the top-left 212x160 (the lobby uses 2..213 x 2..161) |
+| movie | `Movies\<Name>.bik`, fallback `Movies\Random Map Default.bik` | FUN_00bc7ab0 (stock `(4) Plains.bik` ...) |
+| parser detail | lines split on blanks and `,`, grouping with `[]` only | FUN_00bcd8f0 tokenizer args `" \t\n,"`, `"[]"`: our old `DisplayHelp (Co-op survival: ...)` would only have shown "(Co-op" |
+
+Text encoding: the game's strings are narrow. `UResourceFile::GetString` uses
+`LoadStringA` (LowLevelEngine), i.e. the Windows ANSI code page; this PC runs code page 1251, and
+the stock Russian scenarios store cp1251 trigger texts (`(2) gamersday.scn`, the three tutorials,
+`scendefault.scn`), which the Russian game shows. So: Language.dll strings for the lobby (UTF-16
+in the DLL, converted by Windows), cp1251 bytes for in-game texts. On a PC whose non-Unicode
+language is not Russian the whole Russian install shows "?" anyway; not our problem to solve.
+
+### What the builders write now
+
+* `.rmv`: ` StringTableID 2704x` / ` StringHelpID 64x` (ids from `map_texts.string_ids`, names
+  27040-27046, help 640-646; free in the stock and the lang-en Language.dll). Test builds
+  (`--test-schedule`, `--waves`, probes) write `DisplayName [..]` / `DisplayHelp [..]` instead.
+* Language.dll: `raf_patch.build_credits` adds the 14 strings (Russian, English when `lang-en` is on)
+  to the generated Language.dll whenever `survival`, `survival-probe` or `coop-modes` is on (it
+  generates that DLL even with `credits` off, as for `zoom-setting`). `build_language.Dll.write`
+  learned to create the missing string blocks (before, ids outside existing blocks were dropped
+  silently; output is unchanged when no new block is needed, test_build_language passes).
+* In-game texts: Russian by default (`--lang ru`), English with `--lang en` (byte-identical
+  trigger chunk to the earlier English builds, checked). Hero names as in Language2.dll
+  (Навуходоносор, Аристандер, Ахиллес, ...), verb agreement (ведет/ведут, пал/пала/пали) and
+  Russian plural (1 волну, 2 волны, 5 волн). Allowed bytes: ASCII, newline, Cyrillic 0xC0-0xFF
+  (no ё, no typographic dashes/quotes), enforced by `map_texts.encode` and check_survival.
+* Pictures: `Data\textures\<map>.tga` = the template's stock picture ((4) plains / (5) babylon) with
+  a round badge (survival shield, zombies skull, endless infinity, boss hunt crown, roles two
+  figures, roles vs AI the same in red, vs hard AI crossed swords), drawn in pure Python, so it is
+  deterministic. Movies: `Data\movies\<Map>.bik` = the template's movie, unchanged (no Bink encoder).
+  Both are built from the player's install; textures/movies are outside the fingerprint.
+
+Why not per-language in-game texts: the `.scn` is a gameplay file (fingerprint), and the overlay
+cache does not track a language, so `raf_patch` always builds Russian. A group that wants English
+in-game texts builds with `--lang en` on every PC (fingerprint then differs from the Russian one).
+
+### In-game tests
+
+1. Apply with `survival,coop-modes` (+ current features). Expect `Language.dll: ...` / `credits:`
+   lines and the overlay counts: survival 8 files, coop-modes 20.
+2. Skirmish lobby, map list: the seven maps show Russian names ("(4) Выживание", "(4) Выживание:
+   зомби", "(4) Бесконечное выживание", "(4) Охота на героев", "(4) Кооп: роли", "(4) Кооп: роли
+   против ИИ", "(5) Кооп против сильного ИИ"). Failure "(4) Survival.scn" = the string ids are not in
+   the installed Language.dll (check that `credits` overlay was installed).
+3. Select each: picture = Plains (Babylon for the 5-player map) with the badge bottom right, not
+   "?". Hover the map button: the help box shows the Russian text, bold names, three lines, nothing
+   cut off. If the text is cut: shorten in map_texts (help limit 320 chars).
+4. Start "(4) Выживание" solo + 1 computer: intro "ВЫЖИВАНИЕ  Удержите город 20 волн...", counter
+   "До волны 1 : 3:58", Cyrillic readable in chat and counter (garbage = font has no Cyrillic in that
+   place; then build `--lang en`).
+5. With `lang-en` on: lobby names/help English, in-game Russian (documented).
+6. Watch whether a movie plays anywhere for our maps (the stock maps' movies are used by a lobby
+   background, FUN_00bc7ab0); if nothing, it is harmless.

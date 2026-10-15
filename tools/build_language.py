@@ -207,6 +207,14 @@ class Dll:
     def write(self, out_path, repl):
         """repl: {string id: new text}. Rebuild the resource section and fix the PE headers."""
         tree = json_copy_tree(self.tree)
+        # ids in string blocks the DLL does not have yet (scenario map texts 27040.., 640..) get
+        # a new empty block in the language/code page of the existing ones; without new ids the
+        # output is unchanged
+        missing = sorted({sid // 16 + 1 for sid in repl} - set(tree[RT_STRING]))
+        if missing:
+            lang0, (_, cp0) = next(iter(tree[RT_STRING][min(tree[RT_STRING])].items()))
+            for blk in missing:
+                tree[RT_STRING][blk] = {lang0: (pack_stringtable_block([''] * 16), cp0)}
         for blk, langs in tree[RT_STRING].items():
             for lang, (blob, cp) in list(langs.items()):
                 strs = parse_stringtable_block(blob)

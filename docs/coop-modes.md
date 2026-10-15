@@ -20,9 +20,10 @@ python tools/build_coop.py "D:\Games\Rise and Fall" <scratch> --test-schedule   
 | (4) Co-op Roles vs AI | `(4) co-op roles vs ai.scn` | (4) plains | 2 humans (slot 1, slot 2) + 1-2 computers |
 | (5) Co-op vs Hard AI | `(5) co-op vs hard ai.scn` | (5) babylon | 2 humans (slots 1-2) + 3 computers |
 
-All in-game and lobby texts are English ASCII, like the survival maps: the Russian install
-renders cp1251 and the existing modes chose English (docs/survival.md section 2), so the new maps
-follow that. A Russian text set would be a second theme dictionary, not a format problem.
+Texts (since 2026-10-15 evening): lobby names and help come from Language.dll string ids, in
+Russian (English with `lang-en`); in-game chat and counters are Russian cp1251 by default,
+English with `--lang en`. Every text lives in `tools/map_texts.py`. Lobby pictures are the
+template's own preview with a badge. Evidence and rules: docs/survival.md section 8.
 
 Multiplayer: every file lives in `Data\scenarios` / `Data\map scripts`, both are in
 `GAMEPLAY_DIRS`, so they count into the fingerprint; both players need the same build.

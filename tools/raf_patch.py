@@ -595,6 +595,8 @@ OVERLAY_ORDER = [n for n in OVERLAYS if n != "credits"] + ["credits"]  # later w
 # Files that decide the simulation; all players must match (REMASTER.txt fingerprint).
 GAMEPLAY_DIRS = ["Data/db", "Data/random map scripts", "Data/unit ai scripts", "Data/map scripts",
                  "Data/scenarios"]  # language stays out
+# their .rmv files take the lobby name/help from Language.dll ids (tools/map_texts.py)
+MAP_TEXT_FEATURES = ("survival", "survival-probe", "coop-modes")
 
 
 def build_credits(feats: list, stock: Path) -> None:
@@ -610,10 +612,15 @@ def build_credits(feats: list, stock: Path) -> None:
         import zoom_setting as zs
 
         extra = zs.string_repl("en" if "lang-en" in feats else "ru")
+    if any(f in feats for f in MAP_TEXT_FEATURES):
+        # lobby name + help of our scenario maps: their .rmv files name these string ids
+        import map_texts
+
+        extra = {**extra, **map_texts.string_repl("en" if "lang-en" in feats else "ru")}
     rc.patch_language_dll(lang, out / "Language.dll", REMASTER_VERSION, extra=extra,
                           credits="credits" in feats)
     if "credits" not in feats:
-        print(f"Language.dll: {len(extra)} zoom-setting strings (credits off)")
+        print(f"Language.dll: {len(extra)} zoom-setting / map strings (credits off)")
         return
     rc.stamp_loadscreen(stock / "loadscreen.bmp", out / "loadscreen.bmp", REMASTER_VERSION)
     n = 0
@@ -810,8 +817,10 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     if cur != MENU_ASPECT_OLD and cur.startswith("68"):
         byte_patches(game, [(EXE, MENU_ASPECT_VA, MENU_ASPECT_OLD, cur, "menu 3D aspect")], False, "menu-aspect (old)")
 
-    # the credits overlay is the generated Language.dll: zoom-setting needs it for its labels
-    ov_feats = feats + (["credits"] if "zoom-setting" in feats and "credits" not in feats else [])
+    # the credits overlay is the generated Language.dll: zoom-setting needs it for its labels,
+    # the scenario maps for their lobby name and help
+    needs_dll = "zoom-setting" in feats or any(f in feats for f in MAP_TEXT_FEATURES)
+    ov_feats = feats + (["credits"] if needs_dll and "credits" not in feats else [])
     if "credits" in ov_feats:
         build_credits(feats, stock)
     had_shaders = "shaders" in state.get("features", [])

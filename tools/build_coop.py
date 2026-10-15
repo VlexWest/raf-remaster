@@ -34,6 +34,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import raf_scn as R  # noqa: E402
 import build_survival as B  # noqa: E402
+import map_texts as M  # noqa: E402
+import map_preview as P  # noqa: E402
 
 PLAYER_ALL_HUMANS, PLAYER_ALL_CPUS = B.PLAYER_ALL_HUMANS, B.PLAYER_ALL_CPUS
 P1, P2 = 7, 8                      # player enum 7.. = lobby player (value - 6)
@@ -201,12 +203,7 @@ def human_victory(b, text, sound):
             (b.eff((2, 2), 'SV Defeat computers', player=PLAYER_ALL_CPUS), 400)]
 
 
-def gold_title(text):
-    return '/r225/g185/b35' + text + '/r255/g255/b255'
-
-
-def red(text):
-    return '/r255/g80/b80' + text + '/r255/g255/b255'
+# every chat/counter text: map_texts.coop (Russian by default, --lang en)
 
 
 # --------------------------------------------------------------------------- 1. endless
@@ -262,11 +259,9 @@ def build_endless(m, theme, vocab, opts, map_size):
               for ut in sorted(types)}
     c_wave = res_cond(b, P1, RES_VAR0, 0, 'SV REF P1 Var0 wave number', op=CMP_REF)
     tok = token(b, c_wave)
-    neutralise_computer(
-        b, vocab, sets,
-        gold_title('ENDLESS SURVIVAL') + '  The waves never stop. Every 5th wave brings a hero. '
-        'When the town falls you will see how many waves you held.',
-        ('Wave 1 in', times[0] - 2), opts)
+    L = opts.lang
+    neutralise_computer(b, vocab, sets, M.coop(L, 'endless_intro'),
+                        (M.coop(L, 'wave_in', k=1), times[0] - 2), opts)
     b.trigger('SV Wave counter reset', [(b.time_after(1, 'SV Counter reset time'), False)],
               [(set_resource(b, 'SV P1 Var0 = 0', P1, RES_VAR0, OP_SET, 0), 0),
                (set_resource(b, 'SV P1 Var1 = 0', P1, RES_VAR0 + 1, OP_SET, 0), 0)])
@@ -274,7 +269,7 @@ def build_endless(m, theme, vocab, opts, map_size):
     plan = []
     for k in range(1, n + 1):
         t = times[k - 1]
-        eff = [(b.chat(gold_title('Wave %d') % k + ' is coming!', 12), 0), (snd_wave, 0),
+        eff = [(b.chat(M.coop(L, 'wave_coming', k=k), 12), 0), (snd_wave, 0),
                (set_resource(b, 'SV W%03d P1 Var0 + 1' % k, P1, RES_VAR0, OP_ADD, 1), 0)]
         groups = B.wave_groups(th, k)
         ce, used = create_groups(b, 'W%03d' % k, groups, theme['roster'], vocab, a_spawn)
@@ -286,12 +281,12 @@ def build_endless(m, theme, vocab, opts, map_size):
             eff.append((b.eff((1, 0), 'SV W%03d create boss %d' % (k, i + 1), object=o), 0))
             used.add(hero(vocab, h))
         if bosses:
-            eff += [(b.chat(red(' and '.join(bosses)) + ' lead wave %d!' % k, 15), 50),
+            eff += [(b.chat(M.coop(L, 'lead_wave', labels=bosses, k=k), 15), 50),
                     (snd_boss, 50),
                     (b.eff((2, 15), 'SV W%03d hero bot AI on' % k, on=1, player=PLAYER_ALL_CPUS), 100)]
         eff += march(b, 'W%03d' % k, used, o_type, o_human_tc)
         nxt = times[k] if k < n else t_loop
-        eff.append((b.counter('Wave %d in' % (k + 1), nxt - t - 1), 200))
+        eff.append((b.counter(M.coop(L, 'wave_in', k=k + 1), nxt - t - 1), 200))
         b.trigger('SV Wave %03d' % k, [(b.time_after(t, 'SV Wave %03d time' % k), False)], eff)
         bonus = B.wave_groups(th, k, theme['coop_bonus'])
         be, bused = create_groups(b, 'W%03d bonus' % k, bonus, theme['roster'], vocab, a_spawn, 50)
@@ -303,11 +298,11 @@ def build_endless(m, theme, vocab, opts, map_size):
                      'bosses': ' and '.join(bosses)})
     # endless phase: looping triggers re-fire every loop_gap seconds after the last explicit wave
     top = B.wave_groups(th, n)
-    loop_eff = [(b.chat(gold_title('Wave ' + tok) + ' is coming!', 12), 10), (snd_wave, 0),
+    loop_eff = [(b.chat(M.coop(L, 'wave_coming', k=tok), 12), 10), (snd_wave, 0),
                 (set_resource(b, 'SV Loop P1 Var0 + 1', P1, RES_VAR0, OP_ADD, 1), 0)]
     ce, used = create_groups(b, 'Loop', top, theme['roster'], vocab, a_spawn)
     loop_eff += ce + march(b, 'Loop', used, o_type, o_human_tc)
-    loop_eff.append((b.counter('Next wave in', loop_gap - 1), 200))
+    loop_eff.append((b.counter(M.coop(L, 'next_wave_in'), loop_gap - 1), 200))
     t_start = times[-1]
     b.trigger('SV Endless loop', [(b.time_after(t_start, 'SV Endless phase'), False)], loop_eff,
               looping=True, true_for=loop_gap)
@@ -319,7 +314,7 @@ def build_endless(m, theme, vocab, opts, map_size):
               be + march(b, 'Loop bonus', bused, o_type, o_human_tc, 150),
               looping=True, true_for=loop_gap)
     boss_pair = ['Achilles', 'The Minotaur']
-    beff = [(b.chat(red(' and '.join(boss_pair)) + ' lead wave ' + tok + '!', 15), 60),
+    beff = [(b.chat(M.coop(L, 'lead_wave', labels=boss_pair, k=tok), 15), 60),
             (snd_boss, 60)]
     bused = set()
     for i, h in enumerate(boss_pair):
@@ -353,12 +348,11 @@ def build_endless(m, theme, vocab, opts, map_size):
     windows = [(bounds[k], bounds[k + 1], k) for k in range(0, n + 1)] + [(t_loop, FOREVER, None)]
     for lo, hi, k in windows:
         if k == 0:
-            text = red('The town has fallen') + ' before the first wave.'
+            text = M.coop(L, 'fallen_first')
         elif k is None:
-            text = red('The town has fallen in wave ' + tok + '.') +                 ' You held out past wave %d. Well fought!' % n
+            text = M.coop(L, 'fallen_endless', tok=tok, n=n)
         else:
-            text = red('The town has fallen in wave %d.' % k) + ' You survived %d wave%s.' % (
-                k - 1, '' if k == 2 else 's')
+            text = M.coop(L, 'fallen_wave', k=k)
         tag = 'endless phase' if k is None else 'wave %03d' % k
         b.trigger('SV Fallen in ' + tag,
                   [(time_window(b, lo, hi, 'SV Window ' + tag), False), (c_quiet, False),
@@ -406,11 +400,9 @@ def build_bosshunt(m, theme, vocab, opts, map_size):
     o_alive = {h: alive_filter(b, b.obj('SV Boss alive %s' % h, PLAYER_ALL_CPUS,
                                         unit_type=hero(vocab, h), count=(1, 99)))
                for st in stages for h in st}
-    neutralise_computer(
-        b, vocab, sets,
-        gold_title('BOSS HUNT') + '  %d enemy heroes will come for you, one at a time. Each '
-        'is stronger than the last and brings a bigger escort. Slay the last to win.' % len(stages),
-        ('Boss 1 in', theme['first'] - 2), opts)
+    L = opts.lang
+    neutralise_computer(b, vocab, sets, M.coop(L, 'hunt_intro', n=len(stages)),
+                        (M.coop(L, 'boss_in', k=1), theme['first'] - 2), opts)
     snd_boss, snd_down = b.sound('a_hero horn'), b.sound('a_completion bell')
     spawn_idx, watch_idx, bonus_idx = [], [], []
     fixups = []                                   # (effect ref, ('spawn'|'watch'|'bonus', k))
@@ -418,8 +410,8 @@ def build_bosshunt(m, theme, vocab, opts, map_size):
     for k, bosses in enumerate(stages, 1):
         label = ' and '.join(bosses)
         groups = B.wave_groups(et, k)
-        eff = [(b.chat(red(label) + ' %s coming! Boss %d of %d.' % (
-            'are' if len(bosses) > 1 else 'is', k, len(stages)), 15), 0), (snd_boss, 0)]
+        eff = [(b.chat(M.coop(L, 'boss_coming', labels=bosses, k=k, n=len(stages)), 15), 0),
+               (snd_boss, 0)]
         ce, used = create_groups(b, 'B%02d escort' % k, groups, theme['roster'], vocab, a_spawn)
         eff += ce
         for i, h in enumerate(bosses):
@@ -433,8 +425,8 @@ def build_bosshunt(m, theme, vocab, opts, map_size):
                                   object=o_type[hero(vocab, h)]), 50))
         eff += [(b.eff((2, 15), 'SV B%02d hero bot AI on' % k, on=1, player=PLAYER_ALL_CPUS), 100)]
         eff += march(b, 'B%02d' % k, used, o_type, o_human_tc)
-        eff.append((b.counter('Boss %d of %d: %s' % (k, len(stages), label), 0, show_time=False),
-                    200))
+        eff.append((b.counter(M.coop(L, 'boss_counter', labels=bosses, k=k, n=len(stages)), 0,
+                              show_time=False), 200))
         e_watch = trigger_switch(b, 'SV B%02d watch on' % k, True)
         e_bonus = trigger_switch(b, 'SV B%02d bonus on' % k, True)
         fixups += [(e_watch, ('watch', k)), (e_bonus, ('bonus', k))]
@@ -448,7 +440,7 @@ def build_bosshunt(m, theme, vocab, opts, map_size):
                                    [(b.exists(o_human_tc2, 'SV Two human TCs (B%02d)' % k), False)],
                                    be, on=False))
         # watch: every boss of the stage dead (alive filter) for 2 s
-        weff = [(b.chat(red(label) + ' %s fallen!' % ('have' if len(bosses) > 1 else 'has'), 15), 0),
+        weff = [(b.chat(M.coop(L, 'boss_fallen', labels=bosses), 15), 0),
                 (snd_down, 0)]
         e_off = trigger_switch(b, 'SV B%02d bonus off' % k, False)
         fixups.append((e_off, ('bonus', k)))
@@ -456,10 +448,10 @@ def build_bosshunt(m, theme, vocab, opts, map_size):
         if k < len(stages):
             e_next = trigger_switch(b, 'SV B%02d next boss on' % k, True)
             fixups.append((e_next, ('spawn', k + 1)))
-            weff += [(b.counter('Boss %d in' % (k + 1), theme['breather'] - 1), 100),
+            weff += [(b.counter(M.coop(L, 'boss_in', k=k + 1), theme['breather'] - 1), 100),
                      (e_next, theme['breather'] * 100)]
         else:
-            weff += human_victory(b, gold_title('Victory!') + ' Every hero has fallen.',
+            weff += human_victory(b, M.coop(L, 'hunt_victory'),
                                   'a_completion bell')
         watch_idx.append(b.trigger('SV Boss %02d down' % k,
                                    [(b.exists(o_alive[h], 'SV %s alive (B%02d)' % (h, k)), True)
@@ -469,7 +461,7 @@ def build_bosshunt(m, theme, vocab, opts, map_size):
     for ref, (kind, k) in fixups:
         set_target(b, ref, idx[kind][k - 1])
     keep_attacking(b, o_type, o_human_tc, theme['first'] + 15)
-    human_defeat(b, o_human_tc, red('The town has fallen.') + ' The hunt is over.')
+    human_defeat(b, o_human_tc, M.coop(L, 'hunt_defeat'))
     b.finish()
     return {'plan': plan, 'spawn': spawn_idx, 'watch': watch_idx, 'bonus': bonus_idx}
 
@@ -502,7 +494,7 @@ def building_types(vocab):
     return sorted(i for i, n in enumerate(vocab.objects) if BUILDING_RE.match(n))
 
 
-def roles_layer(theme, intro_delay=600):
+def roles_layer(theme, lang, intro_delay=600):
     def layer(b, ctx):
         vocab = ctx['vocab']
         sets = ctx['sets']
@@ -526,13 +518,10 @@ def roles_layer(theme, intro_delay=600):
         b.trigger('SV Roles hand-over', [(b.time_after(2, 'SV Roles start'), False)], hand,
                   looping=True, true_for=theme['handover_every'])
         b.trigger('SV Roles intro', [(b.time_after(6, 'SV Roles intro time'), False)],
-                  [(b.chat(gold_title('ROLES') + '  Slot 1 = ECONOMIST: all citizens, builds '
-                           'everything. Slot 2 = COMMANDER: every soldier, hero and finished '
-                           'barracks/stable/archery range goes to him.', 30), intro_delay),
-                   (b.chat('Tithe: every %d s the economist pays the commander %d gold and %d wood '
-                           'when he holds %d+, more above %d.' % (
-                               theme['tithe_every'], theme['tithe'][0][1], theme['tithe'][0][1],
-                               theme['tithe'][0][0], theme['tithe'][1][0]), 30),
+                  [(b.chat(M.coop(lang, 'roles_intro'), 30), intro_delay),
+                   (b.chat(M.coop(lang, 'roles_tithe', every=theme['tithe_every'],
+                                  give=theme['tithe'][0][1], have=theme['tithe'][0][0],
+                                  more=theme['tithe'][1][0]), 30),
                     intro_delay + 300)])
         for res, rname in ((RES_GOLD, 'gold'), (RES_WOOD, 'wood')):
             for i, (have, give) in enumerate(theme['tithe']):
@@ -549,10 +538,11 @@ def roles_layer(theme, intro_delay=600):
 
 
 def build_roles(m, theme, vocab, opts, map_size):
-    wave_theme = dict(B.THEMES['classic'], first_wave=360,
+    wave_theme = dict(B.localize('classic', B.THEMES['classic'], opts.lang), first_wave=360,
                       help=theme['help'], title=theme['title'])
     wopts = argparse.Namespace(**dict(vars(opts), boss_buffs=False))   # survival waves as shipped
-    plan = B.build_mode(m, wave_theme, vocab, wopts, map_size, extra=roles_layer(theme))
+    plan = B.build_mode(m, wave_theme, vocab, wopts, map_size,
+                        extra=roles_layer(theme, opts.lang))
     return {'plan': plan, 'wave_theme': wave_theme}
 
 
@@ -561,9 +551,8 @@ def build_roles_ai(m, theme, vocab, opts, map_size):
     sets = {k: vocab.unitset(v) for k, v in B.UNITSETS.items()}
     b.trigger('SV Setup', [(b.time_after(1), False)],
               diplomacy(b, computers_allied=True) +
-              [(b.chat(gold_title('CO-OP ROLES vs AI') + '  The computers keep their own AI.', 20),
-                100)])
-    roles_layer(theme, intro_delay=0)(b, dict(vocab=vocab, sets=sets))
+              [(b.chat(M.coop(opts.lang, 'roles_ai_intro'), 20), 100)])
+    roles_layer(theme, opts.lang, intro_delay=0)(b, dict(vocab=vocab, sets=sets))
     b.finish()
     return {}
 
@@ -582,8 +571,7 @@ VSAI = {
 def build_vsai(m, theme, vocab, opts, map_size):
     b = B.Builder(m)
     eff = diplomacy(b, computers_allied=True)
-    eff.append((b.chat(gold_title('CO-OP vs HARD AI') + '  Three computer empires are allied '
-                       'against you. Hold together.', 20), 100))
+    eff.append((b.chat(M.coop(opts.lang, 'vsai_intro'), 20), 100))
     if opts.ai_bonus:
         eff += [(set_resource(b, 'SV Computer gold +%d' % opts.ai_bonus, PLAYER_ALL_CPUS, RES_GOLD,
                               OP_ADD, opts.ai_bonus), 0),
@@ -653,7 +641,7 @@ def build_probe(m, theme, vocab, opts, map_size):
     return {'sets': sets}
 
 
-PROBE = {'map': '(4) coop probe', 'pretty': '(4) Coop Probe', 'title': 'Coop probe',
+PROBE = {'map': '(4) coop probe', 'pretty': '(4) Coop Probe', 'title': 'Coop probe', 'lobby': False,
          'help': 'DIAGNOSTIC MAP for the co-op mode triggers (docs/coop-modes.md).'}
 
 MODES = {
@@ -669,7 +657,7 @@ MODES = {
 
 def test_schedule(name, theme):
     """LIVE TESTING ONLY: compressed clocks so a test reaches the interesting parts quickly."""
-    t = dict(theme, help='TEST SCHEDULE BUILD. ' + theme['help'])
+    t = dict(theme, help='TEST SCHEDULE BUILD. ' + theme['help'], lobby=False)
     if name == 'endless':
         t.update(first_wave=30, intervals=[(10 ** 6, 20)], boss_breather=5, size_cap=6,
                  loop_gap=20, tier_waves=2)
@@ -692,7 +680,7 @@ def build_file(game, name, theme, fn, vocab, opts):
     file_name = theme['map'] + '.scn'
     h['name'] = R.S(theme['pretty'] + '.scn')
     h['map_name'] = R.S(theme['pretty'] + '.scn')
-    h['desc'] = R.S(theme['help'])
+    h['desc'] = R.S(B.header_help(dict(theme, lang=opts.lang)))
     h['map_id'] = B.map_id(file_name)
     f.header = R.build_header(h)
     f.trailer = struct.pack('<I', h['map_id'])
@@ -713,6 +701,11 @@ def main(argv=None):
     ap.add_argument('--test-schedule', action='store_true', help='LIVE TESTING ONLY: short clocks')
     ap.add_argument('--probe', action='store_true',
                     help='LIVE TESTING ONLY: write "(4) coop probe" instead of the modes')
+    ap.add_argument('--lang', choices=M.LANGS, default='ru',
+                    help='language of the in-game texts (default ru; all players need the same '
+                         'build). Lobby name/help come from Language.dll either way.')
+    ap.add_argument('--no-previews', dest='previews', action='store_false',
+                    help='do not write the lobby picture (Data/textures) and movie (Data/movies)')
     opts = ap.parse_args(argv)
     opts.spawn, opts.ai_off, opts.force_diplomacy, opts.zombie_buffs = 'area', True, True, False
     game = Path(opts.game_dir)
@@ -730,7 +723,9 @@ def main(argv=None):
         scn.parent.mkdir(parents=True, exist_ok=True)
         rmv.parent.mkdir(parents=True, exist_ok=True)
         scn.write_bytes(data)
-        rmv.write_bytes(B.rmv_text(theme).replace('build_survival', 'build_coop').encode('cp1252'))
+        rmv.write_bytes(B.rmv_text(theme).replace('build_survival', 'build_coop').encode('ascii'))
+        if opts.previews and name != 'probe':
+            P.write_previews(game, theme.get('template', '(4) plains'), theme['map'], out)
         print('%-9s %s  %d bytes  sha256 %s' % (name, scn, len(data),
                                                 hashlib.sha256(data).hexdigest()[:12]))
         results[name] = (theme, data, raw, info, template)

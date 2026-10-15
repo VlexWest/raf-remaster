@@ -30,6 +30,7 @@ import raf_scn as R  # noqa: E402
 import build_survival as B  # noqa: E402
 import build_coop as C  # noqa: E402
 import check_survival as CS  # noqa: E402
+import map_texts as M  # noqa: E402
 
 check = CS.check
 FAILS = CS.FAILS
@@ -198,7 +199,7 @@ def two_humans(tcs=lambda t: {1: 1, 2: 1}, kill=kill_after(60), tick=None):
     return dict(humans=[1, 2], cpus=[3], tcs=tcs, kill=kill, tick=tick)
 
 
-def stub_endless(m, vocab, info, label):
+def stub_endless(m, vocab, info, label, lang='ru'):
     times, t_loop, gap = info['times'], info['t_loop'], info['loop_gap']
     n = len(times)
     # a) never ends while the town stands; loop phase keeps firing every gap seconds
@@ -219,7 +220,8 @@ def stub_endless(m, vocab, info, label):
     waves_started = n + len(lp)
     check(w.res[1][C.RES_VAR0] == waves_started, label + ': Var0 %d, waves %d' % (
         w.res[1][C.RES_VAR0], waves_started))
-    loop_msgs = [s for _, s in w.chat if 'is coming' in s and 'Wave %d' % (n + 1) in s]
+    mk = M.MARK[lang]
+    loop_msgs = [s for _, s in w.chat if mk['coming'] in s and mk['wave'] % (n + 1) in s]
     check(len(loop_msgs) == 1, label + ': token wave message for wave %d: %s' % (n + 1, loop_msgs))
     check(not any('/#PA' in s for _, s in w.chat), label + ': unresolved token in chat')
     alive = sum(1 for u in w.units if u['alive'])
@@ -231,15 +233,15 @@ def stub_endless(m, vocab, info, label):
                     (times[-1] + gap / 4, n), (t_loop + 3 * gap + gap / 2, None)]:
         w, f = stub_run(m, vocab, two_humans(tcs=lambda t, when=when: {1: 0, 2: 0} if t > when
                                              else {1: 1, 2: 1}), when + 60)
-        msgs = [COLOR.sub('', s) for _, s in w.chat if 'fallen' in s]
+        msgs = [COLOR.sub('', s) for _, s in w.chat if mk['fallen'] in s]
         check(w.result is not None and w.result[0] == 'defeat', label + ': no defeat at %s' % when)
         check(len(msgs) == 1, label + ': defeat at %d: messages %s' % (when, msgs))
-        if k is None:
-            want = 'wave %d.' % (n + 4)
+        if k is None:     # token expanded by the stub: the 4th looped wave
+            want = COLOR.sub('', M.coop(lang, 'fallen_endless', tok=str(n + 4), n=n))
         elif k == 0:
-            want = 'before the first wave'
+            want = COLOR.sub('', M.coop(lang, 'fallen_first'))
         else:
-            want = 'wave %d. You survived %d wave' % (k, k - 1)
+            want = COLOR.sub('', M.coop(lang, 'fallen_wave', k=k))
         check(msgs and want in msgs[0], label + ': defeat at %d says %r, want %r' % (
             when, msgs[:1], want))
         print('  stub endless defeat at %6.0f s -> %-8s %s' % (when, w.result and w.result[0],
@@ -482,6 +484,7 @@ def negative_tests(results, vocab):
 
 
 def main(argv):
+    sys.stdout.reconfigure(errors='backslashreplace')   # Russian chat lines on any console code page
     ap = argparse.ArgumentParser()
     ap.add_argument('game_dir')
     ap.add_argument('overlay_dir', nargs='?')
@@ -496,6 +499,7 @@ def main(argv):
         with contextlib.redirect_stdout(io.StringIO()):
             results = C.main([str(game), d1])
             again = C.main([str(game), d2])
+            english = C.main([str(game), d2, '--lang', 'en', '--mode', 'endless'])
             ts = C.main([str(game), d2, '--test-schedule'])
             probe = C.main([str(game), d2, '--probe'])
             bb = C.main([str(game), d2, '--mode', 'bosshunt', '--boss-buffs'])
@@ -505,6 +509,16 @@ def main(argv):
                 ov = overlay / 'Data' / 'scenarios' / (results[name][0]['map'] + '.scn')
                 check(ov.exists() and ov.read_bytes() == results[name][1],
                       name + ': overlay differs from a fresh build (rebuild it)')
+        files = {p.relative_to(d1): p.read_bytes() for p in Path(d1).rglob('*') if p.is_file()}
+        if overlay:
+            ov = {p.relative_to(overlay): p.read_bytes() for p in overlay.rglob('*') if p.is_file()}
+            check(ov == files, 'overlay differs from a fresh build (rebuild it): %s' % sorted(
+                str(k) for k in set(ov) ^ set(files) | {k for k in ov if ov[k] != files.get(k)}))
+        CS.check_map_outputs(game, d1, {t['map']: t.get('template', '(4) plains')
+                                        for t, *_ in results.values()}, 'co-op')
+        release = {t['map'] for t, *_ in results.values()} | {t['map'] for t in B.THEMES.values()}
+        check(release == set(M.MAPS), 'map_texts.LOBBY %s != built maps %s' % (
+            sorted(M.MAPS), sorted(release)))
     print('  %d maps deterministic%s' % (len(results), ', overlay current' if overlay else ''))
     print('2-4. structure, references, vocabulary')
     classes, vocab_stock = CS.stock_vocab(game)
@@ -541,6 +555,8 @@ def main(argv):
     print('5. stub engine')
     stub_endless(R.Manager.parse(results['endless'][2]), vocab, results['endless'][3], 'endless')
     stub_endless(R.Manager.parse(ts['endless'][2]), vocab, ts['endless'][3], 'endless test-schedule')
+    stub_endless(R.Manager.parse(english['endless'][2]), vocab, english['endless'][3], 'endless --lang en',
+                 lang='en')
     stub_bosshunt(R.Manager.parse(results['bosshunt'][2]), vocab, results['bosshunt'][3], 'bosshunt',
                   results['bosshunt'][0])
     stub_bosshunt(R.Manager.parse(ts['bosshunt'][2]), vocab, ts['bosshunt'][3],

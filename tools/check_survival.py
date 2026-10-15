@@ -53,6 +53,11 @@ ENUM_FIELDS = [
     ('O', 'object', 'uc4'), ('O', 'object', 'ua8'),
 ]
 # values not used by any shipped scenario, with the code that defines them
+# effect fields that carry player-visible text (and the effect names derived from them: 'MSG ...',
+# 'COUNTER ...'): ASCII plus cp1251 Cyrillic, as in the stock Russian scenarios (tutorials,
+# (2) gamersday); every other text field stays ASCII
+PLAYER_TEXT_FIELDS = ('text', 'counter', 'name')
+
 PROVEN_NEW = {
     ('E', 'Victory', 'player', 3): 'FUN_0089c9a0 case 3 = every human player (bfada0 loops them)',
     ('E', 'Defeat', 'player', 3): 'FUN_0089c9a0 case 3 = every human player (8c3fa0 loops them)',
@@ -97,7 +102,9 @@ def stock_vocab(game):
 # --------------------------------------------------------------------------- structure
 
 
-def check_file(data, raw, template, label):
+def check_file(data, raw, template, label, environment=None):
+    """environment: the theme's night lighting; then the terrain chunk (4) may differ from the
+    template, but only by that environment name (build_survival.set_terrain_environment)."""
     f = R.ScnFile(data)
     check(struct.unpack_from('<I', data, 0)[0] == len(data) - 4, label + ': payload length')
     h = R.parse_header(f.header)
@@ -106,7 +113,10 @@ def check_file(data, raw, template, label):
     t = R.load_any(template)
     check([c[2] for c in f.chunks] == [c[2] for c in t.chunks], label + ': chunk order')
     for a, b in zip(f.chunks, t.chunks):
-        if a[2] != 6:
+        if a[2] == 4 and environment:
+            check(f.get(4) == B.set_terrain_environment(t.get(4), environment),
+                  label + ': chunk 4 differs by more than the environment name')
+        elif a[2] != 6:
             check(a == b, label + ': chunk %d changed' % a[2])
     check(f.get(6) == raw, label + ': chunk 6 content')
     m = R.Manager.parse(raw, full_tail=True)
@@ -194,13 +204,224 @@ def check_vocab(m, game, vocab_stock, classes_stock, label, template_m):
             check(R.T(o['env']).lower() in envs, label + ': environment %s missing' % R.T(o['env']))
         for k, v in o.items():
             if isinstance(v, bytes):
-                check(all(b < 0x80 for b in v.rstrip(b'\0')), label + ': non-ASCII text in %s' % k)
+                body = v.rstrip(b'\0')
+                if k in PLAYER_TEXT_FIELDS:     # shown to players: cp1251 like the stock texts
+                    check(all(b == 0x0A or 0x20 <= b < 0x7F or b >= 0xC0 for b in body),
+                          label + ': %s has bytes outside ASCII + cp1251 Cyrillic' % k)
+                else:
+                    check(all(b < 0x80 for b in body), label + ': non-ASCII text in %s' % k)
                 check(len(v) < 400, label + ': text too long')
     heroes = vocab.set_members(vocab.unitset(B.UNITSETS['heroes']))['types']
     for o in m.objects[skip[2]:]:
         if 'boss' in R.T(o['name']) and o['u84']:
             check(o['u84'] in heroes, label + ': boss %d not in the hero unit set' % o['u84'])
     return new_values
+
+
+# --------------------------------------------------------------------------- lobby texts, previews
+
+
+def check_lobby_texts(game):
+    """map_texts: every string encodable and in the safe byte set, help within the stock size,
+    string ids free in the stock Language.dll (and the lang-en build if present) and apart from
+    the zoom-setting ids; the patched Language.dll returns exactly our strings."""
+    import tempfile as _tf
+    import map_texts as M
+    import raf_credits as rc
+    import zoom_setting as zs
+    from build_language import Dll
+
+    n = 0
+    for label, text in M.all_texts():
+        try:
+            M.encode(text)
+            n += 1
+        except (ValueError, UnicodeEncodeError) as e:
+            check(False, 'map_texts %s: %s' % (label, e))
+    samples = dict(k=7, n=12, tok='/#PA0042', labels=['Julius Caesar', 'Tor'], every=30, give=100,
+                   have=300, more=800)
+    keys = ['endless_intro', 'wave_in', 'next_wave_in', 'wave_coming', 'lead_wave', 'fallen_first',
+            'fallen_wave', 'fallen_endless', 'hunt_intro', 'boss_in', 'boss_coming', 'boss_counter',
+            'boss_fallen', 'hunt_victory', 'hunt_defeat', 'roles_intro', 'roles_tithe',
+            'roles_ai_intro', 'vsai_intro']
+    for lang in M.LANGS:
+        for key in keys:
+            for labels in (['Cleopatra'], ['Sargon'], ['Julius Caesar', 'Tor']):
+                text = M.coop(lang, key, **dict(samples, labels=labels))
+                try:
+                    M.encode(text)
+                except (ValueError, UnicodeEncodeError) as e:
+                    check(False, 'map_texts coop %s %s: %s' % (lang, key, e))
+                check(len(text) < 300, 'map_texts coop %s %s: too long' % (lang, key))
+    check(M.coop('ru', 'boss_fallen', labels=['Cleopatra']).endswith('пала!'), 'ru: Cleopatra gender')
+    check(M.coop('ru', 'fallen_wave', k=6).endswith('5 волн.'), 'ru: plural 5')
+    check(M.coop('ru', 'fallen_wave', k=3).endswith('2 волны.'), 'ru: plural 2')
+    check(M.coop('ru', 'fallen_wave', k=2).endswith('1 волну.'), 'ru: plural 1')
+    for stem in M.MAPS:
+        for lang in M.LANGS:
+            name, help_ = M.LOBBY[stem][lang]
+            check(name.startswith(stem[:4]) and help_.startswith(stem[:3] + ' /fb'),
+                  '%s %s: name/help do not start like the stock texts' % (stem, lang))
+            check(len(help_) <= M.HELP_MAX_CHARS and help_.count('\n') <= M.HELP_MAX_BREAKS,
+                  '%s %s: help longer than the stock ones (%d chars)' % (stem, lang, len(help_)))
+            check(help_.count('/fb') == help_.count('/fd'), '%s %s: /fb without /fd' % (stem, lang))
+    ids = set()
+    for stem in M.MAPS:
+        ids |= set(M.string_ids(stem))
+    check(len(ids) == 2 * len(M.MAPS), 'map string ids not unique')
+    zoom_ids = set(zs.string_repl('ru'))
+    check(not (ids & zoom_ids), 'map string ids clash with zoom-setting ids')
+    dlls = [Path(game) / 'Language.dll']
+    en = Path(__file__).resolve().parent.parent / 'work' / 'overlay-lang-en' / 'Language.dll'
+    if en.exists():
+        dlls.append(en)
+    for dll in dlls:
+        d = Dll(str(dll))
+        used = ids & set(d.strings)
+        check(not used, '%s: map string ids already used: %s' % (dll, sorted(used)))
+        for lang in M.LANGS:
+            with _tf.TemporaryDirectory() as tmp:
+                out = Path(tmp) / 'Language.dll'
+                extra = {**zs.string_repl(lang), **M.string_repl(lang)}
+                rc.patch_language_dll(dll, out, '1.0', extra=extra, credits=True)
+                got = Dll(str(out)).strings
+                for sid, text in M.string_repl(lang).items():
+                    check(got.get(sid) == text, '%s %s: string %d reads back %r' % (
+                        dll.name, lang, sid, (got.get(sid) or '')[:30]))
+                check(all(got.get(sid) == t for sid, t in d.strings.items()
+                          if sid not in extra and sid not in (rc.COPYRIGHT_ID, rc.CREDITS_FIRST_ID,
+                                                               rc.CREDITS_TIME_ID)),
+                      '%s %s: other strings changed' % (dll.name, lang))
+                if sys.platform == 'win32':
+                    from build_language import verify_dll_loads
+                    bad = verify_dll_loads(str(out), M.string_repl(lang))
+                    check(bad == 0, '%s %s: LoadStringW mismatches %d' % (dll.name, lang, bad))
+                    acp, bad = loadstring_a(out, M.string_repl(lang))
+                    if acp == 1251:     # the game reads its strings with LoadStringA (LowLevelEngine)
+                        check(bad == 0, '%s %s: LoadStringA (cp1251) mismatches %d' % (
+                            dll.name, lang, bad))
+                    elif lang == 'ru':
+                        print('  note: ANSI code page %d, LoadStringA path not checked' % acp)
+    print('  %d fixed texts encodable, %d coop texts, %d string ids free in %s' % (
+        n, len(keys) * 6, len(ids), ', '.join(p.parent.name + '/' + p.name for p in dlls)))
+
+
+def negative_lobby_tests(game):
+    """Broken lobby entries / pictures / texts must be caught."""
+    import shutil
+    import io
+    import contextlib
+    import map_texts as M
+
+    def caught(label, mutate):
+        with tempfile.TemporaryDirectory() as a:
+            with contextlib.redirect_stdout(io.StringIO()):
+                B.main([str(game), a, '--theme', 'classic'])
+            mutate(Path(a))
+            before = len(FAILS)
+            with contextlib.redirect_stdout(io.StringIO()):
+                check_map_outputs(game, a, {'(4) survival': '(4) plains'}, 'neg')
+            n = len(FAILS) - before
+            del FAILS[before:]
+        check(n > 0, 'negative test not caught: ' + label)
+        print('  caught: %-60s (%d findings)' % (label, n))
+
+    def old_rmv(a):
+        p = a / 'Data' / 'map scripts' / '(4) survival.rmv'
+        p.write_bytes(p.read_bytes().replace(b' StringTableID', b'DisplayHelp\t(x)\r\n//'))
+
+    def stray_pixel(a):
+        p = a / 'Data' / 'textures' / '(4) survival.tga'
+        d = bytearray(p.read_bytes())
+        d[18 + 4 * (256 * 200 + 10)] ^= 0xFF          # bottom-up row 200 = top row 55, x 10
+        p.write_bytes(bytes(d))
+
+    def other_movie(a):
+        p = a / 'Data' / 'movies' / '(4) Survival.bik'
+        shutil.copyfile(Path(game) / 'Data' / 'movies' / '(5) Babylon.bik', p)
+
+    caught('rmv with its own help text instead of the string ids', old_rmv)
+    caught('picture changed outside the badge', stray_pixel)
+    caught('movie that is not the template movie', other_movie)
+    for bad in ('Волна — 5', 'ёлка', 'Ура «вперед»'):
+        try:
+            M.encode(bad)
+            check(False, 'negative test not caught: unsafe character in %r' % bad)
+        except (ValueError, UnicodeEncodeError):
+            print('  caught: %-60s' % ('unsafe character in a text (%s)' % ascii(bad)[:20]))
+
+
+def loadstring_a(path, expect):
+    """The game's own path: UResourceFile::GetString = LoadStringA (ANSI code page, LowLevelEngine
+    0x10.. 'LoadStringA'). Returns (code page, mismatches against the cp1251 bytes)."""
+    import ctypes
+    from ctypes import wintypes
+    import map_texts as M
+    k = ctypes.WinDLL('kernel32', use_last_error=True)
+    k.LoadLibraryExW.restype = wintypes.HMODULE
+    k.LoadLibraryExW.argtypes = [wintypes.LPCWSTR, wintypes.HANDLE, wintypes.DWORD]
+    k.FreeLibrary.argtypes = [wintypes.HMODULE]
+    u = ctypes.WinDLL('user32', use_last_error=True)
+    u.LoadStringA.argtypes = [wintypes.HMODULE, wintypes.UINT, ctypes.c_char_p, ctypes.c_int]
+    h = k.LoadLibraryExW(str(Path(path).resolve()), None, 0x2)     # LOAD_LIBRARY_AS_DATAFILE
+    if not h:
+        return k.GetACP(), len(expect)
+    buf = ctypes.create_string_buffer(4096)
+    bad = 0
+    for sid, text in expect.items():
+        n = u.LoadStringA(h, sid, buf, 4096)
+        bad += buf.raw[:n] != M.encode(text)
+    k.FreeLibrary(h)
+    return k.GetACP(), bad
+
+
+def badge_area(stem):
+    import map_preview as P
+    cx, cy = P.PICTURE[0] - 28, P.PICTURE[1] - 28
+    return lambda x, y: (x - cx) ** 2 + (y - cy) ** 2 <= 22 * 22
+
+
+def check_map_outputs(game, out, maps, label):
+    """maps: {stem: template}. The .rmv names the map's Language.dll strings; the preview picture
+    is the template's with only the badge changed; the movie is the template's."""
+    import map_texts as M
+    import map_preview as P
+
+    game, out = Path(game), Path(out)
+    for stem, template in maps.items():
+        rmv = (out / 'Data' / 'map scripts' / (stem + '.rmv')).read_bytes()
+        nid, hid = M.string_ids(stem)
+        check(b' StringTableID\t%d\r\n' % nid in rmv and b' StringHelpID\t%d\r\n' % hid in rmv
+              and b'DisplayHelp' not in rmv and b'DisplayName' not in rmv,
+              '%s %s: rmv does not name strings %d/%d' % (label, stem, nid, hid))
+        src = game / 'Data' / 'textures' / (template + '.tga')
+        tga = out / 'Data' / 'textures' / (stem + '.tga')
+        if check(tga.is_file(), '%s %s: no preview picture' % (label, stem)):
+            h0, w0, hh0, r0, d0, t0 = P.read_tga(src)
+            h1, w1, hh1, r1, d1, t1 = P.read_tga(tga)
+            check((h0, w0, hh0, d0, t0) == (h1, w1, hh1, d1, t1) and
+                  tga.stat().st_size == src.stat().st_size,
+                  '%s %s: picture header/size differs from %s' % (label, stem, template))
+            inside = badge_area(stem)
+            changed = outside = 0
+            for y in range(hh0):
+                for x in range(w0):
+                    a, b = r0[y][x * 4:x * 4 + 4], r1[y][x * 4:x * 4 + 4]
+                    if a != b:
+                        changed += 1
+                        outside += not inside(x, y)
+                    if inside(x, y):
+                        check(b[3] == 255, '%s %s: badge pixel not opaque' % (label, stem))
+            check(changed > 500 and outside == 0, '%s %s: %d pixels changed, %d outside the badge'
+                  % (label, stem, changed, outside))
+        mv = out / 'Data' / 'movies' / P.movie_name(stem)
+        smv = game / 'Data' / 'movies' / P.movie_name(template)
+        check(mv.is_file() and mv.read_bytes() == smv.read_bytes(),
+              '%s %s: movie is not the template movie' % (label, stem))
+    glyphs = {P.BADGES[s] for s in maps}
+    check(len(glyphs) == len(maps), label + ': two maps share the same badge')
+    print('  %s: %d lobby entries name their strings, pictures + movies from %s' % (
+        label, len(maps), ', '.join(sorted(set(maps.values())))))
 
 
 # --------------------------------------------------------------------------- stub engine
@@ -455,10 +676,21 @@ def main(argv):
     vocab = B.Vocab(game)
     template = game / 'Data' / 'scenarios' / '(4) plains.scn'
     template_m = R.Manager.parse(R.load_any(template).get(6))
-    for flags in ([], ['--boss-buffs', '--zombie-buffs'], ['--no-diplomacy'], ['--test-schedule']):
+    for flags in ([], ['--boss-buffs', '--zombie-buffs'], ['--no-diplomacy'], ['--test-schedule'],
+                  ['--lang', 'en']):
         with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
             B.main([str(game), a] + flags)
             B.main([str(game), b] + flags)
+            files_a = {p.relative_to(a): p.read_bytes() for p in Path(a).rglob('*') if p.is_file()}
+            files_b = {p.relative_to(b): p.read_bytes() for p in Path(b).rglob('*') if p.is_file()}
+            check(files_a == files_b, '%s: build output not deterministic' % (flags,))
+            if overlay and not flags:
+                ov = {p.relative_to(overlay): p.read_bytes() for p in overlay.rglob('*') if p.is_file()}
+                check(ov == files_a, 'overlay differs from a fresh build (rebuild it): %s' % sorted(
+                    str(k) for k in set(ov) ^ set(files_a) | {k for k in ov if ov[k] != files_a.get(k)}))
+            if not flags:
+                check_map_outputs(game, a, {t['map']: '(4) plains' for t in B.THEMES.values()},
+                                  'survival')
             for theme_name, theme in sorted(B.THEMES.items()):
                 if '--test-schedule' in flags:
                     theme = B.test_schedule(theme)
@@ -473,9 +705,12 @@ def main(argv):
                           label + ': overlay file differs from a fresh build (rebuild it)')
                 rmv = (Path(a) / 'Data' / 'map scripts' / (theme['map'] + '.rmv')).read_bytes()
                 check(b'UseMapGenerator' in rmv and all(c < 0x80 for c in rmv), label + ': rmv')
+                if '--test-schedule' in flags:     # own text, not the release strings
+                    check(b'DisplayHelp		[TEST SCHEDULE BUILD.' in rmv and b'StringTableID' not in rmv,
+                          label + ': test build rmv must carry its own [text]')
                 f = R.ScnFile(d1)
                 raw = f.get(6)
-                m, h = check_file(d1, raw, template, label)
+                m, h = check_file(d1, raw, template, label, theme.get('environment'))
                 check_refs(m, label, len(template_m.triggers))
                 newv = check_vocab(m, game, vocab_stock, classes, label, template_m)
                 for cn, fld, v, why in sorted(newv, key=str):
@@ -495,6 +730,9 @@ def main(argv):
         print('  probe: %d triggers, sha256 %s' % (len(m.triggers), hashlib.sha256(d).hexdigest()[:12]))
     print('7. negative tests (each mutation must be caught)')
     negative_tests(game, vocab, template_m)
+    print('8. lobby texts (Language.dll strings) and in-game text encoding')
+    check_lobby_texts(game)
+    negative_lobby_tests(game)
     print('FAILED: %d' % len(FAILS) if FAILS else 'ALL CHECKS PASSED')
     return 1 if FAILS else 0
 

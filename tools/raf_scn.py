@@ -82,10 +82,11 @@ class Writer:
 
 
 def S(text):
-    """Text -> UWideString bytes (cp1252, two NULs, as the game writes them)."""
+    """Text -> UWideString bytes (cp1251 = the Russian release's text encoding, two NULs, as
+    the game writes them; ASCII is identical in every code page)."""
     if isinstance(text, bytes):
         return text
-    return text.encode('cp1252') + b'\0\0'
+    return text.encode('cp1251') + b'\0\0'
 
 
 def T(raw):
