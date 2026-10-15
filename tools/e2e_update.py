@@ -97,6 +97,7 @@ def main():
     args = sys.argv[1:]
     stock = Path(args[args.index("--stock") + 1]) if "--stock" in args else Path(r"D:\Games\Rise and Fall")
     scratch = Path(args[args.index("--scratch") + 1]) if "--scratch" in args else Path(r"D:\raf-upd-e2e")
+    hd = "--hd" in args  # install with HD textures; the update must take them over instead of upscaling
     setup = REPO / "dist" / "RaF-Remaster-Setup.exe"
     sha_file = setup.with_name(setup.name + ".sha256")
     if scratch.exists():
@@ -109,16 +110,19 @@ def main():
     try:
         # 1. install
         r = subprocess.run([str(setup), "--selftest", "--source", str(stock), "--target", str(inst),
-                            "--test-root", str(scratch / "links"), "--no-hd", "--lang", "en",
-                            "--log", str(scratch / "install.log")])
+                            "--test-root", str(scratch / "links"), "--lang", "en",
+                            "--log", str(scratch / "install.log")] + ([] if hd else ["--no-hd"]))
         print(f"install: exit {r.returncode} after {time.time() - t0:.0f} s", flush=True)
         check(r.returncode in (0, 3), "selftest install finished (0 = fingerprint as expected, 3 = differs)")
         state0 = json.loads((inst / ".raf-remaster" / "state.json").read_text())
         info0 = json.loads((inst / ".raf-remaster" / "install.json").read_text(encoding="utf-8"))
         launcher = inst / ru.LAUNCHER_EXE
         check(launcher.is_file() and (inst / ru.LAUNCHER_DIR).is_dir(), "launcher installed next to the game")
-        check(info0["version"] == VERSION and info0["test_root"] and info0["hd"] is False,
-              f"install.json: version {info0['version']}, test marker, HD off")
+        check(info0["version"] == VERSION and info0["test_root"] and info0["hd"] is hd,
+              f"install.json: version {info0['version']}, test marker, HD {'on' if hd else 'off'}")
+        if hd:
+            check(all((inst / ".raf-remaster" / "hd" / n).is_file() for n in
+                      ("key.txt", "manifest-hd-terrain.json", "manifest-hd-units.json")), "HD manifests + key saved")
         lnk = scratch / "links" / "Desktop" / "Rise and Fall Remaster.lnk"
         check(lnk.is_file(), "desktop shortcut written (into the test root)")
         check((inst / "REMASTER-NOTICE.txt").is_file() and
@@ -170,6 +174,8 @@ def main():
             time.sleep(1)
         print(f"update: {time.time() - t1:.0f} s", flush=True)
         check(result is not None and "\nDONE: " in result, "update finished (DONE in the setup log)")
+        if hd:
+            check(result.count("taken over from the previous install") == 2, "both HD steps taken over, not upscaled")
         state1 = json.loads((inst / ".raf-remaster" / "state.json").read_text())
         info1 = json.loads((inst / ".raf-remaster" / "install.json").read_text(encoding="utf-8"))
         check(state1["fingerprint"] == fp0, f"fingerprint unchanged ({fp0} -> {state1['fingerprint']})")

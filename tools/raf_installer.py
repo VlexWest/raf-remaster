@@ -70,6 +70,7 @@ REG_GAME = r"Software\Midway Home Entertainment\Rise and Fall"
 REG_UNINSTALL = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
 TEST_ROOT_KEY = r"Software\RaF-Remaster-Installer-Test"
 HD_FEATURES = ("hd-terrain", "hd-units")
+HD_DIR = "hd"  # in <game>/.raf-remaster: the HD manifests + step version of this install (reuse_hd)
 DXVK_FILES = ("d3d9.dll", "dxvk.conf")
 COPY_SKIP = {"unins000.exe", "unins000.dat", ".raf-remaster"}  # never copy the original's uninstaller
 CREATE_NO_WINDOW = raf_proc.NO_WINDOW
@@ -478,6 +479,9 @@ class Installer:
                 continue
             self.step(T("step_build", label=feature_label(n), i=i + 1, n=len(names)), None)
             t = time.time()
+            if n in HD_FEATURES and self.reuse_hd(n):
+                self.log(T("log_hd_reused", n=n, s=f"{time.time() - t:.0f}"))
+                continue
             try:
                 rp.OVERLAYS[n].build(self.src)
             except BaseException as e:  # noqa: BLE001 - builders end with sys.exit on errors
@@ -492,6 +496,54 @@ class Installer:
                 shutil.rmtree(rp.REPO / "work" / "cache" / f"hd-{n}", ignore_errors=True)
             self.log(T("log_built", n=n, s=f"{time.time() - t:.0f}"))
         return feats
+
+    def hd_key(self) -> str:
+        """Version of the HD step: the texture builder's source (model, tags, rules all live there)."""
+        return sha256(self.build / "tools" / "build_textures.py")
+
+    def reuse_hd(self, n) -> bool:
+        """Update mode: take the HD textures of the install being updated instead of upscaling again,
+        when the HD step is unchanged, every source texture still has its hash and every installed HD
+        file is exactly what that step wrote. Anything off: False, the step runs as usual."""
+        if self.update_info is None:
+            return False
+        old = Path(self.update_info["_dir"])
+        saved = old / ".raf-remaster" / HD_DIR
+        try:
+            if (saved / "key.txt").read_text().strip() != self.hd_key():
+                return False
+            man = json.loads((saved / f"manifest-{n}.json").read_text(encoding="utf-8"))
+            files = man["files"]
+            if not files:
+                return False
+            for f in files:
+                rel = f["file"]
+                if sha256(self.src / rel) != f["source_sha256"] or sha256(old / rel) != f["sha256"]:
+                    return False
+            root = self.rp.OVERLAYS[n].root
+            for f in files:
+                dst = root / f["file"]
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(old / f["file"], dst)
+            (root / f"manifest-{n}.json").write_text(json.dumps(man, indent=1), encoding="utf-8")
+            return True
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+
+    def save_hd(self):
+        """Keep the HD manifests + step version next to the install, for reuse_hd on the next update."""
+        out = self.dst / ".raf-remaster" / HD_DIR
+        shutil.rmtree(out, ignore_errors=True)
+        if getattr(self, "rp", None) is None:  # no patcher loaded (tests of the file steps alone)
+            return
+        mans = [self.rp.OVERLAYS[n].root / f"manifest-{n}.json" for n in HD_FEATURES]
+        mans = [m for m in mans if m.is_file()]
+        if not mans or "hd_failed" in self.result:
+            return
+        out.mkdir(parents=True)
+        for m in mans:
+            shutil.copy2(m, out / m.name)
+        (out / "key.txt").write_text(self.hd_key() + "\n", encoding="ascii")
 
     def apply(self, feats):
         self.step(T("step_patch"), None)
@@ -542,6 +594,10 @@ class Installer:
         rp.set_registry = wrapped
 
     def finish_files(self):
+        try:
+            self.save_hd()
+        except OSError as e:  # only costs the next update a full HD rebuild
+            self.log(f"HD reuse data not saved: {_msg(e)}")
         shutil.rmtree(self.build, ignore_errors=True)
         for lang in LANGS:
             shutil.copy2(self.bundle / f"README_{lang.upper()}.txt", self.dst / f"REMASTER-README_{lang.upper()}.txt")
