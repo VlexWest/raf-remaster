@@ -75,11 +75,15 @@ PERSIAN = {
                 4: 'A - Cav04 - Spear Cavalry (Level 4 Persian)',
                 5: 'A - Cav05 - Sword Cavalry (Level 5 Persian)'},
     'elephant': {3: 'A - Cav03a - War Elephant (Archer) (Level 3 Persian)'},
-    # siege, so walls alone cannot hold the waves: rams for gates & walls, onagers from range
+    # siege, so walls alone cannot hold the waves: rams for gates & walls, small catapults from
+    # range (Egyptian stone thrower: attack 325, range 17, area 0.8); the Persian onager (attack 810,
+    # range 19, area 1.2) flattens a town, so it stays rare (SIEGE_CAP)
     'ram': {1: 'A - Siege02b - Siege Ram (Persian)'},
+    'catapult': {1: 'A - Siege03a - Catapult (Egypt)'},
     'onager': {1: 'A - Siege03a - Onager (Persian)'},
 }
-SIEGE = ('ram', 'onager')
+SIEGE = ('ram', 'catapult', 'onager')
+SIEGE_CAP = {'onager': lambda k: 1 + k // 20}   # per wave, on top of the share limit
 
 # --------------------------------------------------------------------------- themes
 
@@ -89,12 +93,14 @@ def classic_mix(k):
     if k <= 1:
         return {'sword': 60, 'spear': 40}
     if k <= 5:
-        return {'sword': 40, 'spear': 30, 'archer': 30, 'ram': 25, 'onager': 25}
+        return {'sword': 40, 'spear': 30, 'archer': 30, 'ram': 25, 'catapult': 25}
     if k <= 10:
-        return {'sword': 30, 'spear': 25, 'archer': 25, 'cavalry': 20, 'ram': 25, 'onager': 25}
+        return {'sword': 30, 'spear': 25, 'archer': 25, 'cavalry': 20, 'ram': 25, 'catapult': 25}
     if k <= 15:
-        return {'sword': 25, 'spear': 20, 'archer': 25, 'cavalry': 20, 'elephant': 10, 'ram': 25, 'onager': 30}
-    return {'sword': 25, 'spear': 20, 'archer': 20, 'cavalry': 25, 'elephant': 10, 'ram': 25, 'onager': 30}
+        return {'sword': 25, 'spear': 20, 'archer': 25, 'cavalry': 20, 'elephant': 10, 'ram': 25, 'catapult': 25,
+                'onager': 5}
+    return {'sword': 25, 'spear': 20, 'archer': 20, 'cavalry': 25, 'elephant': 10, 'ram': 25, 'catapult': 25,
+            'onager': 5}
 
 
 def zombie_mix(k):
@@ -260,10 +266,15 @@ def wave_groups(theme, k, scale=1.0):
     if k < theme.get('siege_from', 0):
         mix = {r: w for r, w in mix.items() if r not in SIEGE}
         wsum = sum(mix.values())
+    if k < theme.get('onager_from', 0):
+        mix.pop('onager', None)
+        wsum = sum(mix.values())
     div = theme.get('siege_div', 6)
     siege, left = [], total
     for role in [r for r in SIEGE if r in mix]:
         n = min(left - 1, max(1, min(round(total * mix.pop(role) / wsum), total // div)))
+        if role in SIEGE_CAP:
+            n = min(n, SIEGE_CAP[role](k))
         if n > 0:
             siege.append((role, level(role), n))
             left -= n

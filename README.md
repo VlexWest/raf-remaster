@@ -43,7 +43,7 @@ Use "Host network game" & "Join network game" for LAN or direct IP games.
 
 The remaster adds maps you play together against the computer:
 
-- **Survival** (Easy, Normal, Hard): endless waves until you fall, with rams & onagers so walls alone will not hold
+- **Survival** (Easy, Normal, Hard): endless waves until you fall, with rams & catapults so walls alone will not hold
 - **Boss Hunt**: hunt down heroes stage by stage
 - **Co-op Roles**: one player runs the economy, the other leads the army
 - **Co-op vs Hard AI**: two players against three computer players

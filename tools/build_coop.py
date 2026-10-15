@@ -227,13 +227,13 @@ ENDLESS_EASY = dict(ENDLESS, map='(4) survival endless easy', pretty='(4) Surviv
                     help='Co-op endless survival, easy: half-size waves, siege from wave 8, more time '
                          'between waves. Add exactly one computer player as the enemy.',
                     first_wave=360, intervals=[(5, 200), (10, 180), (20, 160), (10 ** 6, 140)],
-                    loop_gap=140, scale=0.5, siege_from=8, siege_div=12)
+                    loop_gap=140, scale=0.5, siege_from=8, siege_div=12, onager_from=30)
 ENDLESS_NORMAL = dict(ENDLESS, map='(4) survival endless normal', pretty='(4) Survival Endless Normal',
                       title='Survival Endless (Normal)',
                       help='Co-op endless survival, normal: smaller waves, siege from wave 4, a little '
                            'more time between waves. Add exactly one computer player as the enemy.',
                       first_wave=300, intervals=[(5, 170), (10, 155), (20, 135), (10 ** 6, 115)],
-                      loop_gap=115, scale=0.75, siege_from=4, siege_div=8)
+                      loop_gap=115, scale=0.75, siege_from=4, siege_div=8, onager_from=16)
 
 
 def endless_size(theme, k):
@@ -348,7 +348,7 @@ def build_endless(m, theme, vocab, opts, map_size):
         sc = theme['scale']
         groups = [(r, lv, max(1, round(sc * n))) for r, lv, n in
                   [('sword', 5, 3 + j // 3), ('cavalry', 5, 3 + j // 3), ('archer', 5, 2 + j // 4),
-                   ('ram', 1, 3 + j // 2), ('onager', 1, 3 + j // 2)]]
+                   ('ram', 1, 3 + j // 2), ('catapult', 1, 3 + j // 2), ('onager', 1, 1 + j // 5)]]
         te, tused = create_groups(b, 'Tier %d' % j, groups, theme['roster'], vocab, a_spawn, 20)
         te += march(b, 'Tier %d' % j, tused, o_type, o_human_tc)
         b.trigger('SV Endless tier %02d' % j,

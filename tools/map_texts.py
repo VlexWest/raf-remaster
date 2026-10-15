@@ -60,12 +60,12 @@ LOBBY = {
     '(4) survival endless': {
         'ru': ('(4) Выживание: сложно',
                '(4) /fbВыживание: сложно/fd - Бесконечные волны, первая через 4 мин, тараны и '
-               'онагры со 2-й, каждую 5-ю ведут герои.\n'
+               'катапульты со 2-й, каждую 5-ю ведут герои.\n'
                '/fbЦель/fd - продержаться как можно дольше: когда город падет, игра скажет, '
                'сколько волн вы пережили.\n'
                '/fbЛобби/fd - 1-2 игрока в одной команде, ровно один компьютер в другой.'),
         'en': ('(4) Survival: Hard',
-               '(4) /fbSurvival: Hard/fd - Endless waves, the first after 4 min, rams & onagers '
+               '(4) /fbSurvival: Hard/fd - Endless waves, the first after 4 min, rams & catapults '
                'from wave 2, heroes lead every 5th.\n'
                '/fbGoal/fd - hold out as long as you can: when the town falls the game tells '
                'you how many waves you survived.\n'
@@ -128,13 +128,13 @@ LOBBY = {
     '(4) survival endless easy': {
         'ru': ('(4) Выживание: легко',
                '(4) /fbВыживание: легко/fd - Бесконечные волны вдвое меньше, первая через 6 мин, '
-               'тараны и онагры с 8-й, больше времени между волнами.\n'
+               'тараны и катапульты с 8-й, больше времени между волнами.\n'
                '/fbЦель/fd - продержаться как можно дольше: когда город падет, игра скажет, '
                'сколько волн вы пережили.\n'
                '/fbЛобби/fd - 1-2 игрока в одной команде, ровно один компьютер в другой.'),
         'en': ('(4) Survival: Easy',
                '(4) /fbSurvival: Easy/fd - Endless half-size waves, the first after 6 min, rams & '
-               'onagers from wave 8, more time between waves.\n'
+               'catapults from wave 8, more time between waves.\n'
                '/fbGoal/fd - hold out as long as you can: when the town falls the game tells '
                'you how many waves you survived.\n'
                '/fbLobby/fd - 1-2 humans on one team, exactly one computer on another.'),
@@ -142,13 +142,13 @@ LOBBY = {
     '(4) survival endless normal': {
         'ru': ('(4) Выживание: средне',
                '(4) /fbВыживание: средне/fd - Бесконечные волны поменьше, первая через 5 мин, '
-               'тараны и онагры с 4-й, каждую 5-ю ведут герои.\n'
+               'тараны и катапульты с 4-й, каждую 5-ю ведут герои.\n'
                '/fbЦель/fd - продержаться как можно дольше: когда город падет, игра скажет, '
                'сколько волн вы пережили.\n'
                '/fbЛобби/fd - 1-2 игрока в одной команде, ровно один компьютер в другой.'),
         'en': ('(4) Survival: Normal',
                '(4) /fbSurvival: Normal/fd - Endless smaller waves, the first after 5 min, rams & '
-               'onagers from wave 4, heroes lead every 5th.\n'
+               'catapults from wave 4, heroes lead every 5th.\n'
                '/fbGoal/fd - hold out as long as you can: when the town falls the game tells '
                'you how many waves you survived.\n'
                '/fbLobby/fd - 1-2 humans on one team, exactly one computer on another.'),
