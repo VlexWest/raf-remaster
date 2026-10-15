@@ -584,7 +584,7 @@ FEATURES = {
     "lang-en": False,
     "credits": True,
     "openspy": False,
-    "click-fix": False,  # Resume a suspended mouse/keyboard each frame; off until tested in game
+    "click-fix": True,  # Resume a suspended mouse/keyboard each frame; live-tested 2026-10-15
 }
 # The autodetect does not know the GPU and leaves every quality at 0 ("Низко"); 3 = "Ультра".
 # The shader upgrade only shows with the higher techniques.
