@@ -489,6 +489,9 @@ OVERLAYS = {
                                         for p in sorted((WORK / "overlay-credits").rglob("*")) if p.is_file()}),
     "lang-en": Overlay("lang-en", WORK / "overlay-lang-en",
                        lambda st: [PY, "tools/build_language.py", st, WORK / "overlay-lang-en"]),
+    # lobby unit limit max 5000 -> 10000 (dbworld.dat record 26); every MP player needs it
+    "unit-limit": Overlay("unit-limit", WORK / "overlay-unitlimit",
+                          lambda st: [PY, "tools/build_unitlimit.py", st, WORK / "overlay-unitlimit", "--max", "10000"]),
 }
 MUTATOR_DIR = WORK / "overlay-mutators"  # one sub folder per mutator (docs/mutators.md); at most one active
 
@@ -513,6 +516,7 @@ FEATURES = {
     "ai-hard": True,
     "ai-personalities": True,
     "unit-ai": True,
+    "unit-limit": True,
     "maps": False,
     "survival": True,
     "survival-probe": False,
