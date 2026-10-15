@@ -67,6 +67,13 @@ python tools/build_installer.py
 
 Скрипт скачает нужные сторонние программы фиксированных версий, проверит их хеши и создаст `dist/RaF-Remaster-Setup.exe`.
 
+Для офлайн-тестов нужны ещё несколько пакетов Python:
+
+```
+python -m pip install unicorn capstone pefile numpy pillow fonttools
+python tools/run_stub_tests.py
+```
+
 ## Авторы
 
 Ремастер сделал [Alexander West](https://thewest.cc/raf).

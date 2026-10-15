@@ -67,6 +67,13 @@ python tools/build_installer.py
 
 This downloads the pinned third-party tools, checks their hashes & writes `dist/RaF-Remaster-Setup.exe`.
 
+The offline tests need a few extra Python packages:
+
+```
+python -m pip install unicorn capstone pefile numpy pillow fonttools
+python tools/run_stub_tests.py
+```
+
 ## Credits
 
 Remastered by [Alexander West](https://thewest.cc/raf).
