@@ -171,7 +171,7 @@ pacing, Minotaur bosses, own texts, separate lobby entry for a Halloween release
 |---|---|---|
 | default (`--unitset-base 137`) | maps listed and load, intro and countdown OK, **defeat ~30 s** | "human town centres" selection empty: unit-set class offset is 134, not 137 (all campaign files use 134) |
 | `--unitset-base 134` | no early defeat, countdown chains to wave 2, **no wave units**, computer has nothing on the revealed minimap | waves were placed "near the computer's town centre": no shipped scenario ever places units that way, and the unit-set based start clean-up ("A-All Units (Non-buildings...)") evidently also removed the town centre, so there was no anchor |
-| current (`ced74ae8` classic, `1db03574` zombies) | not yet run | spawn "inside area" at the map centre (shipped encoding), unit-set base 134, enemy addressed by exact unit types, start clean-up only removes the 4 citizen types |
+| current (`ced74ae8` classic, `1db03574` zombies) | probe passes (below); `--test-schedule` classic solo: waves 1-20 announced and chained, Sargon announced at wave 5 and later "defeated", red enemy units reached the town, town centre destroyed -> "Вы проиграли!" at ~6:40. Zombies (test schedule, 200 s): intro, hordes 1-14 chained, Gladiator boss defeated; **daylight, not night**. Win not reached solo without defending (only the probe's Victory(3) step seen) | spawn "inside area" at the map centre (shipped encoding), unit-set base 134, enemy addressed by exact unit types, start clean-up only removes the 4 citizen types |
 
 ### Probe map
 
@@ -190,6 +190,9 @@ pacing, Minotaur bosses, own texts, separate lobby entry for a Halloween release
 | 50 s | ordered to attack-move | enemy units walk to your TC | TaskToObject broken |
 | 55-60 s | AI off; L5 swords at centre | 2 more enemy swordsmen | AI-off blocks creation |
 | 120 s | victory in 3 s | victory screen | Victory(3) broken |
+
+In-game result 2026-10-15 03:00 (solo + 1 computer, reveal map):
+5 s PASS (chat line, own unit at centre on the minimap), 10 s PASS (red unit at centre on the minimap, my swordsman died there later: population 5 -> 4 at ~46 s), 15-25 s chat lines shown (slot 2/3/4), 30 s chat shown, 35 s PASS (chat, units at centre), 40 s FOUND, 45 s three type lines (2508 spear, 2414 sword, 61 war elephant), 50 s chat shown, units left the centre toward the top of the map (where the computer town is) rather than visibly toward my town in the first 25 s, 55 s "AI switched off", 60 s L5 swords line shown, 120 s PASS ("Вы победили!").
 
 ## 5. In-game tests for the full maps
 

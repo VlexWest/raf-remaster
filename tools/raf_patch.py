@@ -199,6 +199,12 @@ OPENSPY = [(EXE, va, "67616d657370792e636f6d", "6f70656e7370792e6e6574", "gamesp
            for va in (0xD275B6, 0xD27A0D, 0xD27F85, 0xD280B0, 0xD28498, 0xD284AC, 0xD2851A, 0xD2963D,
                       0xD29D3D, 0xD2BA9C, 0xD2BB3C, 0xD2BBB4)]
 
+# ai-personalities: the computer player's set-civilization override (0x472310) only re-runs the
+# AI setup FUN_004701a0(civ) when byte 0x101e255 is 0. In skirmish it is 1 when the slots are
+# set up (read live: 0 in the lobby, 1 in game), so every AI kept the neutral slot-0 values.
+# Dropping the jne makes the per-civ overrides live (measured: Persia AI 20/12, 0.625, 0.32, 40/20).
+AI_CIV_GATE = [(EXE, 0x00472336, "7508", "9090", "always apply the per-civ AI setup")]
+
 # Old wheel/hotkey clamp patches (zoom up to 1.5): byte_patches() undoes them on installs that had them.
 ZOOM_PAST_ONE = [
     (EXE, 0x009288A7, "d81decd1c400", "d81d34d4c400", "wheel: compare zoom with 1.5"),
@@ -463,11 +469,11 @@ OVERLAYS = {
                        mapping=_unit_ai_files),
     "maps": Overlay("maps", REPO / "rms", lambda st: [PY, "tools/gen_rms.py"], mapping=_map_files),
     # built by other tools; installed only when present (docs/survival.md, docs/language.md)
-    # --unitset-base 134: with the default offset the "human town centres" selection is empty
-    # and the game is lost 30 s in (live test 2026-10-15)
-    "survival": Overlay("survival", WORK / "overlay-survival-134",
-                        lambda st: [PY, "tools/build_survival.py", st, WORK / "overlay-survival-134",
-                                    "--theme", "all", "--unitset-base", "134"]),
+    "survival": Overlay("survival", WORK / "overlay-survival",
+                        lambda st: [PY, "tools/build_survival.py", st, WORK / "overlay-survival", "--theme", "all"]),
+    # diagnostic map "(4) Survival Probe" (docs/survival.md 5a); test only
+    "survival-probe": Overlay("survival-probe", WORK / "overlay-survival-probe",
+                              lambda st: [PY, "tools/build_survival.py", st, WORK / "overlay-survival-probe", "--probe"]),
     # generated at apply time by raf_credits.py from the Language.dll / loadscreen.bmp that would
     # otherwise be installed; keep it after lang-en so it patches whichever Language.dll is used
     "credits": Overlay("credits", WORK / "overlay-credits", None,
@@ -497,10 +503,11 @@ FEATURES = {
     "hd-units": True,
     "shaders": True,
     "ai-hard": True,
-    "ai-personalities": False,
+    "ai-personalities": True,
     "unit-ai": True,
     "maps": False,
     "survival": False,
+    "survival-probe": False,
     "lang-en": False,
     "credits": True,
     "openspy": False,
@@ -702,6 +709,7 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
 
     byte_patches(game, CMDLINE_FIX, True, "host/join command line fix")
     byte_patches(game, OPENSPY, "openspy" in feats, "openspy")
+    byte_patches(game, AI_CIV_GATE, "ai-personalities" in feats, "ai civ gate")
     byte_patches(game, BORDERLESS, borderless, "borderless")
     byte_patches(game, SMOOTH_SCROLL, "smooth-scroll" in feats, "smooth-scroll")
     byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0 (old)")
