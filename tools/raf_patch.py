@@ -68,21 +68,22 @@ start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" %*
 
 # Command line: the game splits it on '-', value between the first pair of quotes,
 # so values must not contain '-'.
-HOST_BAT = """\
-@echo off
-rem Host a network game: Host.bat ["Game name"]   (no '-' in the name)
+HOST_BAT = """@echo off
+rem Host a LAN / direct-IP network game: Host.bat ["Game name"] ["Player name"]
+rem (no '-' in names). The game needs player name, pid and pass next to hostgame.
 cd /d "%~dp0"
 type REMASTER.txt
 echo.
 echo Compare the fingerprint above with the other players before starting.
 set "NAME=%~1"
 if "%NAME%"=="" set "NAME=RAF Remaster"
-start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" -hostgame "%NAME%"
+set "PLAYER=%~2"
+if "%PLAYER%"=="" set "PLAYER=%USERNAME%"
+start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" -hostgame "%NAME%" -playername "%PLAYER%" -pid "1" -pass "raf"
 """
 
-JOIN_BAT = """\
-@echo off
-rem Join a network game by IP: Join.bat [1.2.3.4]
+JOIN_BAT = """@echo off
+rem Join a network game by IP: Join.bat [1.2.3.4] ["Player name"]   (no '-' in names)
 cd /d "%~dp0"
 type REMASTER.txt
 echo.
@@ -90,7 +91,9 @@ echo Compare the fingerprint above with the host before joining.
 set "IP=%~1"
 if "%IP%"=="" set /p "IP=IP address of the host: "
 if "%IP%"=="" exit /b 1
-start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" -joinbyip "%IP%"
+set "PLAYER=%~2"
+if "%PLAYER%"=="" set "PLAYER=%USERNAME%"
+start "" RiseAndFall.exe -datapath "Data\\" -redistpath "Redist\\" -joinbyip "%IP%" -playername "%PLAYER%" -pid "2" -pass "raf"
 """
 
 # Files the patcher creates from scratch; revert deletes them.
@@ -112,6 +115,14 @@ LAA_FLAG = 0x20
 REG_KEY = r"Software\Midway Home Entertainment\Rise and Fall"
 
 # Byte patches: (file, virtual address, original bytes, patched bytes, what it does).
+# Always applied: -hostgame / -joinbyip crash at startup (FUN_006dc000 writes a "skip menu
+# backgrounds" flag into the UIManager before it exists: write to 0x1a2, crash dump in
+# work/crashes). The flag is cosmetic, so the write is dropped.
+CMDLINE_FIX = [
+    (EXE, 0x006DC226, "a1e4cb0101c680a201000001", "909090909090909090909090",
+     "no UIManager write in the early command line pass"),
+]
+
 # Addresses are for the v1.15 (08.18.2006) files; every patch checks the original bytes first.
 BORDERLESS = [
     # DX9Screen::Capture, fullscreen branch: D3DPRESENT_PARAMETERS.Windowed = ebp (0) -> eax (the
@@ -591,6 +602,7 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
             shutil.move(game / name, orig / name)
     print("intro movies: removed")
 
+    byte_patches(game, CMDLINE_FIX, True, "host/join command line fix")
     byte_patches(game, BORDERLESS, borderless, "borderless")
     byte_patches(game, SMOOTH_SCROLL, "smooth-scroll" in feats, "smooth-scroll")
     byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0 (old)")
