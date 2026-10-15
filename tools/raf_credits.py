@@ -19,7 +19,7 @@ CREDITS_FIRST_ID = 14013
 MENU_TITLE_ID = 7698     # free in stock + lang-en (block 482; zoom-setting uses 7696/7697/7709/7710)
 MENU_SUB_ID = 7699
 MENU_TITLE = "RISE AND FALL REMASTER"      # ROMIC.ttf (the menu button font): no '/' and no middle dot
-MENU_SUB = f"BY {AUTHOR}  \u00b7  {LINK}".upper()  # Georgia Bold has both
+MENU_SUB = f"BY {AUTHOR.upper()}  ·  {LINK}"  # Georgia Bold has both; the short link is case-sensitive
 
 
 def credit_line(version: str) -> str:

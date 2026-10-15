@@ -175,7 +175,7 @@ def language_checks(tmp: Path):
     menu_ids = {rc.MENU_TITLE_ID: rc.MENU_TITLE, rc.MENU_SUB_ID: rc.MENU_SUB}
     check("menu string ids not used by zoom-setting or map texts", not set(menu_ids) & others)
     check("menu texts", rc.MENU_TITLE == "RISE AND FALL REMASTER"
-          and rc.MENU_SUB == "BY ALEXANDER WEST  \u00b7  THEWEST.CC/RAF", (rc.MENU_TITLE, rc.MENU_SUB))
+          and rc.MENU_SUB == "BY ALEXANDER WEST  \u00b7  thewest.cc/raf", (rc.MENU_TITLE, rc.MENU_SUB))
     from fontTools.ttLib import TTFont
     for sid, path in ((rc.MENU_TITLE_ID, GAME / "ROMIC.ttf"), (rc.MENU_SUB_ID, Path("C:/Windows/Fonts/georgiab.ttf"))):
         if path.exists():
