@@ -592,7 +592,7 @@ FEATURES = {
     "unit-ai": True,
     "unit-limit": True,
     "maps": False,
-    "survival": True,
+    "survival": False,  # 20-wave classic & zombie maps; off: Survival Endless (coop-modes) replaces them
     "survival-probe": False,
     "coop-modes": True,  # five co-op maps (docs/coop-modes.md); in-game tests pending
     "lang-en": False,

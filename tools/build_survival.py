@@ -75,21 +75,26 @@ PERSIAN = {
                 4: 'A - Cav04 - Spear Cavalry (Level 4 Persian)',
                 5: 'A - Cav05 - Sword Cavalry (Level 5 Persian)'},
     'elephant': {3: 'A - Cav03a - War Elephant (Archer) (Level 3 Persian)'},
+    # siege, so walls alone cannot hold the waves: rams for gates & walls, onagers from range
+    'ram': {1: 'A - Siege02b - Siege Ram (Persian)'},
+    'onager': {1: 'A - Siege03a - Onager (Persian)'},
 }
+SIEGE = ('ram', 'onager')
 
 # --------------------------------------------------------------------------- themes
 
 
 def classic_mix(k):
-    if k <= 2:
+    # walls alone hold infantry forever, so siege is about a third of every wave from wave 2
+    if k <= 1:
         return {'sword': 60, 'spear': 40}
     if k <= 5:
-        return {'sword': 40, 'spear': 30, 'archer': 30}
+        return {'sword': 40, 'spear': 30, 'archer': 30, 'ram': 25, 'onager': 25}
     if k <= 10:
-        return {'sword': 30, 'spear': 25, 'archer': 25, 'cavalry': 20}
+        return {'sword': 30, 'spear': 25, 'archer': 25, 'cavalry': 20, 'ram': 25, 'onager': 25}
     if k <= 15:
-        return {'sword': 25, 'spear': 20, 'archer': 25, 'cavalry': 20, 'elephant': 10}
-    return {'sword': 25, 'spear': 20, 'archer': 20, 'cavalry': 25, 'elephant': 10}
+        return {'sword': 25, 'spear': 20, 'archer': 25, 'cavalry': 20, 'elephant': 10, 'ram': 25, 'onager': 30}
+    return {'sword': 25, 'spear': 20, 'archer': 20, 'cavalry': 25, 'elephant': 10, 'ram': 25, 'onager': 30}
 
 
 def zombie_mix(k):
@@ -243,7 +248,21 @@ def wave_groups(theme, k, scale=1.0):
     total = max(1, round(theme['size'](k) * scale))
     mix = {r: w for r, w in theme['mix'](k).items() if r in theme['roster']}
     want = theme['level'](k)
-    groups, left = [], total
+    wsum = sum(mix.values())
+
+    def level(role):
+        levels = sorted(theme['roster'][role])
+        below = [lv for lv in levels if lv <= want]
+        return below[-1] if below else levels[0]
+
+    # siege first, so rounding cannot drop it: at least one per siege role, at most a sixth of the wave each
+    siege, left = [], total
+    for role in [r for r in SIEGE if r in mix]:
+        n = min(left - 1, max(1, min(round(total * mix.pop(role) / wsum), total // 6)))
+        if n > 0:
+            siege.append((role, level(role), n))
+            left -= n
+    groups, total = [], left
     roles = sorted(mix, key=lambda r: -mix[r])
     wsum = sum(mix.values())
     for i, role in enumerate(roles):
@@ -252,15 +271,12 @@ def wave_groups(theme, k, scale=1.0):
             n = min(n, max(1, total // 8))
         if n <= 0:
             continue
-        levels = sorted(theme['roster'][role])
-        below = [lv for lv in levels if lv <= want]
-        lv = below[-1] if below else levels[0]
-        groups.append((role, lv, n))
+        groups.append((role, level(role), n))
         left -= n
     if left > 0 and groups:
         role, lv, n = groups[0]
         groups[0] = (role, lv, n + left)
-    return groups
+    return groups + siege
 
 
 def boss_label(bosses, lang='en'):

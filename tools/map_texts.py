@@ -89,13 +89,13 @@ LOBBY = {
         'ru': ('(4) Кооп: роли',
                '(4) /fbКооп: роли/fd - Слот 1 - экономист: жители, стройка, ресурсы. Слот 2 - '
                'полководец: ему переходят все солдаты, герои и готовые военные здания, '
-               'экономист платит ему дань. 20 волн, как в Выживании.\n'
+               'экономист платит ему дань. 20 волн с осадными машинами.\n'
                '/fbЛобби/fd - люди строго в слотах 1 и 2 одной команды, ровно один компьютер в '
                'другой.'),
         'en': ('(4) Co-op Roles',
                '(4) /fbCo-op Roles/fd - Slot 1 is the economist: citizens, building, resources. '
                'Slot 2 is the commander: he gets every soldier, hero and finished military '
-               'building, paid by a tithe. 20 waves as in Survival.\n'
+               'building, paid by a tithe. 20 waves with siege engines.\n'
                '/fbLobby/fd - humans exactly in slots 1 and 2 of one team, exactly one computer '
                'on another.'),
     },

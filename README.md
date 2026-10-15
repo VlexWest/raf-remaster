@@ -18,7 +18,7 @@ On a non-Russian install the new texts (co-op maps, menus) are English.
 - A harder Hard AI with its own personality per civilization
 - Smarter unit AI for artillery & transports
 - Unit limit raised to 10000
-- New co-op maps, including a Survival mode
+- New co-op maps, including an endless Survival mode with siege waves
 - Fix for dead mouse clicks right after launch
 
 ## Install
@@ -43,8 +43,7 @@ Use "Host network game" & "Join network game" for LAN or direct IP games.
 
 The remaster adds maps you play together against the computer:
 
-- **Survival**: hold out against waves, there is also a zombie version
-- **Survival Endless**: waves until you fall
+- **Survival Endless**: waves until you fall, with rams & onagers so walls alone will not hold
 - **Boss Hunt**: hunt down heroes stage by stage
 - **Co-op Roles**: one player runs the economy, the other leads the army
 - **Co-op vs Hard AI**: two players against three computer players

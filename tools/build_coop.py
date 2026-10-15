@@ -330,7 +330,8 @@ def build_endless(m, theme, vocab, opts, map_size):
     tiers = []
     for j in range(1, theme['tiers'] + 1):
         start = t_start + j * theme['tier_waves'] * loop_gap
-        groups = [('sword', 5, 3 + j // 3), ('cavalry', 5, 3 + j // 3), ('archer', 5, 2 + j // 4)]
+        groups = [('sword', 5, 3 + j // 3), ('cavalry', 5, 3 + j // 3), ('archer', 5, 2 + j // 4),
+                  ('ram', 1, 3 + j // 2), ('onager', 1, 3 + j // 2)]
         te, tused = create_groups(b, 'Tier %d' % j, groups, theme['roster'], vocab, a_spawn, 20)
         te += march(b, 'Tier %d' % j, tused, o_type, o_human_tc)
         b.trigger('SV Endless tier %02d' % j,
