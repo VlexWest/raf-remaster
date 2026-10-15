@@ -23,21 +23,27 @@ def menu_line(version: str) -> str:
     return f"Remastered by {AUTHOR} | {LINK} | v{version}"
 
 
-def patch_language_dll(src: Path, dst: Path, version: str) -> None:
+def patch_language_dll(src: Path, dst: Path, version: str, extra=None, credits=True) -> None:
+    """Credits strings (credits=True) plus `extra` {string id: text} (zoom-setting labels)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from build_language import Dll
 
     d = Dll(str(src))
     repl = {}
-    cr = d.strings[COPYRIGHT_ID].rstrip()
-    repl[COPYRIGHT_ID] = f"{cr}   {menu_line(version)}"
-    first = d.strings[CREDITS_FIRST_ID]
-    repl[CREDITS_FIRST_ID] = (f"/fs48/fb\n\n\n\nRise and Fall Remaster v{version}\n\n"
-                              f"/fs28Remastered by\n/fs24  {AUTHOR}\n/fs24  {LINK}\n\n\n\n") + first
-    try:
-        repl[CREDITS_TIME_ID] = str(int(d.strings[CREDITS_TIME_ID]) + 15000)
-    except ValueError:
-        pass
+    if credits:
+        cr = d.strings[COPYRIGHT_ID].rstrip()
+        repl[COPYRIGHT_ID] = f"{cr}   {menu_line(version)}"
+        first = d.strings[CREDITS_FIRST_ID]
+        repl[CREDITS_FIRST_ID] = (f"/fs48/fb\n\n\n\nRise and Fall Remaster v{version}\n\n"
+                                  f"/fs28Remastered by\n/fs24  {AUTHOR}\n/fs24  {LINK}\n\n\n\n") + first
+        try:
+            repl[CREDITS_TIME_ID] = str(int(d.strings[CREDITS_TIME_ID]) + 15000)
+        except ValueError:
+            pass
+    for sid, text in (extra or {}).items():
+        if d.strings.get(sid, text) != text:
+            raise SystemExit(f"{src}: string {sid} is already used ({d.strings[sid]!r})")
+        repl[sid] = text
     dst.parent.mkdir(parents=True, exist_ok=True)
     d.write(str(dst), repl)
 

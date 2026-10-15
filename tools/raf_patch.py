@@ -12,6 +12,9 @@ or VPN change, the adapter order can change.
 
 Features (see FEATURES; `features` prints them with their default):
   borderless, smooth-scroll, zoom      exe/DLL byte patches
+  zoom-setting                         camera distance slider in Options > Interface instead of the
+                                       fixed zoom (exe code cave + UI XML + Language.dll strings);
+                                       --zoom then sets the registry default "Remaster Camera Zoom"
   mips, hd-terrain, hd-units           texture overlays (hd wins over mips on shared files)
   shaders                              fx overlay (shader.cache is moved aside so the game rebuilds it)
   ai-hard, ai-personalities, unit-ai, maps, survival
@@ -194,6 +197,32 @@ def unzoom(game: Path) -> None:
     (game / EXE).write_bytes(data)
 
 
+def zoom_setting_installed(game: Path) -> bool:
+    import zoom_setting as zs
+
+    data = (game / EXE).read_bytes()
+    _, va, _old, new, _ = next(p for p in zs.patches() if p[1] == 0x006CF731)
+    off = pe_va_to_offset(data, va)
+    return data[off:off + 5].hex() == new
+
+
+def set_zoom_sites(game: Path, mode, zoom: float) -> None:
+    """Camera zoom sites: mode None = stock, "fixed" = zoom_patches(zoom), "setting" = the
+    zoom_setting.py cave (in-game slider). Whatever is installed is taken back to stock first."""
+    import zoom_setting as zs
+
+    setting = zs.patches()
+    if zoom_setting_installed(game):
+        byte_patches(game, setting, False, "zoom setting (old)")
+    unzoom(game)
+    if mode == "setting":
+        byte_patches(game, setting, True, "zoom setting (Options > Interface slider)")
+    elif mode == "fixed":
+        byte_patches(game, zoom_patches(zoom), True, f"zoom x{zoom}")
+    else:
+        print("zoom: off")
+
+
 def menu_aspect_patch(w: int, h: int):
     return [(EXE, MENU_ASPECT_VA, MENU_ASPECT_OLD, "68" + struct.pack("<f", w / h).hex(), "menu 3D aspect")]
 
@@ -329,13 +358,18 @@ def _reg_split(name: str):
     return (REG_KEY + "\\" + sub if sub else REG_KEY), value
 
 
-def set_registry(game: Path, values: dict, release=()) -> None:
+def set_registry(game: Path, values: dict, release=(), defaults=None) -> None:
     """Set DWORD values (names may be 'Subkey/Value'), saving the values found before the
-    first apply; names in `release` go back to their saved value."""
+    first apply; names in `release` go back to their saved value. `defaults` are only written
+    the first time the patcher manages them, so a value the player changed in game survives."""
     import winreg
 
     saved_path = game / STATE_DIR / "registry.json"
     saved = json.loads(saved_path.read_text()) if saved_path.exists() else {}
+    values = dict(values)
+    for name, value in (defaults or {}).items():
+        if name not in saved and name not in values:
+            values[name] = value
     for name, value in values.items():
         path, val = _reg_split(name)
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as key:
@@ -492,6 +526,11 @@ OVERLAYS = {
     # lobby unit limit max 5000 -> 10000 (dbworld.dat record 26); every MP player needs it
     "unit-limit": Overlay("unit-limit", WORK / "overlay-unitlimit",
                           lambda st: [PY, "tools/build_unitlimit.py", st, WORK / "overlay-unitlimit", "--max", "10000"]),
+    # Options screen with the camera distance slider (+ view distance slider range 0..300); the
+    # slider's strings go into the generated Language.dll of the "credits" overlay
+    "zoom-setting": Overlay("zoom-setting", WORK / "overlay-zoom-setting",
+                            lambda st: [PY, "tools/zoom_setting.py", "build", st, WORK / "overlay-zoom-setting"],
+                            manifest=WORK / "overlay-zoom-setting" / "manifest.json"),
 }
 MUTATOR_DIR = WORK / "overlay-mutators"  # one sub folder per mutator (docs/mutators.md); at most one active
 
@@ -508,6 +547,7 @@ FEATURES = {
     "borderless": True,
     "smooth-scroll": True,
     "zoom": True,
+    "zoom-setting": False,  # replaces the fixed zoom when on; off until tested in game
     "ultra": True,
     "mips": True,
     "hd-terrain": True,
@@ -543,7 +583,16 @@ def build_credits(feats: list, stock: Path) -> None:
     # the copyright label (Language.dll 7209, carries our line) is not drawn on the 3D main menu even
     # when moved (rc.patch_menu_xml, tested): the line shows where the game uses 7209 elsewhere
     lang = OVERLAYS["lang-en"].root / "Language.dll" if "lang-en" in feats else stock / "Language.dll"
-    rc.patch_language_dll(lang, out / "Language.dll", REMASTER_VERSION)
+    extra = {}
+    if "zoom-setting" in feats:
+        import zoom_setting as zs
+
+        extra = zs.string_repl("en" if "lang-en" in feats else "ru")
+    rc.patch_language_dll(lang, out / "Language.dll", REMASTER_VERSION, extra=extra,
+                          credits="credits" in feats)
+    if "credits" not in feats:
+        print(f"Language.dll: {len(extra)} zoom-setting strings (credits off)")
+        return
     rc.stamp_loadscreen(stock / "loadscreen.bmp", out / "loadscreen.bmp", REMASTER_VERSION)
     n = 0
     # DDS textures are NOT signed: a signature in DDS_HEADER.dwReserved1 made textures fail to load
@@ -726,9 +775,10 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     byte_patches(game, BORDERLESS, borderless, "borderless")
     byte_patches(game, SMOOTH_SCROLL, "smooth-scroll" in feats, "smooth-scroll")
     byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0 (old)")
+    zoom_given = zoom is not None
     zoom = float(state.get("zoom", DEFAULT_ZOOM) if zoom is None else zoom)
-    unzoom(game)
-    byte_patches(game, zoom_patches(zoom), "zoom" in feats, f"zoom x{zoom}")
+    # zoom-setting replaces the fixed zoom: same sites, distance from the registry + options slider
+    set_zoom_sites(game, "setting" if "zoom-setting" in feats else "fixed" if "zoom" in feats else None, zoom)
     # menu-aspect experiment (0xb30859 4:3 -> w/h) un-stretched the menu 3D scene but the menu
     # frame and logo vanished; only undo it on installs that still carry it.
     exe_data = (game / EXE).read_bytes()
@@ -737,10 +787,12 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     if cur != MENU_ASPECT_OLD and cur.startswith("68"):
         byte_patches(game, [(EXE, MENU_ASPECT_VA, MENU_ASPECT_OLD, cur, "menu 3D aspect")], False, "menu-aspect (old)")
 
-    if "credits" in feats:
+    # the credits overlay is the generated Language.dll: zoom-setting needs it for its labels
+    ov_feats = feats + (["credits"] if "zoom-setting" in feats and "credits" not in feats else [])
+    if "credits" in ov_feats:
         build_credits(feats, stock)
     had_shaders = "shaders" in state.get("features", [])
-    sync_overlays(game, feats, stock, rebuild, state)
+    sync_overlays(game, ov_feats, stock, rebuild, state)
     if had_shaders != ("shaders" in feats) or ("shaders" in feats and rebuild):
         shader_cache_reset(game)
 
@@ -758,18 +810,24 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
         print(f"network: adapter {picked[0]} = {picked[1]} (of {', '.join(picked[2])})")
     else:
         print(f"network: no address matching {net or 'the default route'}; Network Adapter left as is")
-    release = []
-    if "zoom" in feats:
+    release, defaults = [], {}
+    if "zoom-setting" in feats:
+        # the player owns both values from now on (options screen); --zoom resets them
+        zs_reg = {"RearClipPlaneModifier": int(round(160 * zoom / 1.5)), "Remaster Camera Zoom": int(round(zoom * 100))}
+        (reg if zoom_given else defaults).update(zs_reg)
+    elif "zoom" in feats:
         # far clip = this/100 x 43.3; 60 (the autodetected minimum) cuts the far terrain at the
         # new zoom distance; 160 gives 69 units.
         reg["RearClipPlaneModifier"] = int(round(160 * zoom / 1.5))
     else:
         release.append("RearClipPlaneModifier")
+    if "zoom-setting" not in feats:
+        release.append("Remaster Camera Zoom")
     if "ultra" in feats:
         reg.update(ULTRA)
     else:
         release += list(ULTRA)
-    set_registry(game, reg, release)
+    set_registry(game, reg, release, defaults)
 
     fp = fingerprint(game)
     (game / "REMASTER.txt").write_text(
