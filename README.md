@@ -81,7 +81,7 @@ Their license texts are in `installer/licenses`.
 
 ## License
 
-The remaster code is MIT licensed, see [LICENSE](LICENSE).
+The remaster code is licensed under Apache 2.0, see [LICENSE](LICENSE) & [NOTICE](NOTICE). If you reuse it, keep the credit from the NOTICE file.
 
 ## Disclaimer
 
