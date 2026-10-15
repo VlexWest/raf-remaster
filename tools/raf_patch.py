@@ -2,7 +2,10 @@
 
 Usage:
     python raf_patch.py apply  <game_dir> [--only a,b] [--skip a,b] [--mutator name|none]
-                               [--zoom 1.0-2.5] [--stock <dir>] [--rebuild]
+                               [--zoom 1.0-2.5] [--net auto|<ip prefix>] [--stock <dir>] [--rebuild]
+--net picks the network address the game uses (registry "Network Adapter"): auto = the LAN
+address of the default route, "100." = Tailscale, "25." = Hamachi. Re-run apply after a reboot
+or VPN change, the adapter order can change.
     python raf_patch.py revert <game_dir>
     python raf_patch.py status <game_dir>
     python raf_patch.py features
@@ -189,6 +192,12 @@ def menu_aspect_patch(w: int, h: int):
 
 # Menu 3D background aspect experiment (see apply); stock bytes: push 1.3333334
 MENU_ASPECT_VA, MENU_ASPECT_OLD = 0x00B30859, "68abaaaa3f"
+
+# OpenSpy (docs/online-mp.md): every "gamespy.com" host in the exe -> "openspy.net" (same length).
+# The player creates an OpenSpy account.
+OPENSPY = [(EXE, va, "67616d657370792e636f6d", "6f70656e7370792e6e6574", "gamespy.com -> openspy.net")
+           for va in (0xD275B6, 0xD27A0D, 0xD27F85, 0xD280B0, 0xD28498, 0xD284AC, 0xD2851A, 0xD2963D,
+                      0xD29D3D, 0xD2BA9C, 0xD2BB3C, 0xD2BBB4)]
 
 # Old wheel/hotkey clamp patches (zoom up to 1.5): byte_patches() undoes them on installs that had them.
 ZOOM_PAST_ONE = [
@@ -494,6 +503,7 @@ FEATURES = {
     "survival": False,
     "lang-en": False,
     "credits": True,
+    "openspy": False,
 }
 # The autodetect does not know the GPU and leaves every quality at 0 ("Низко"); 3 = "Ультра".
 # The shader upgrade only shows with the higher techniques.
@@ -524,6 +534,28 @@ def build_credits(feats: list, stock: Path) -> None:
     if "unit-ai" in feats and OVERLAYS["unit-ai"].built():
         n += sum(rc.stamp_text(p, rc.SIGNATURE) for p in OVERLAYS["unit-ai"].files().values())
     print(f"credits: menu line, credits roll, loading screen built; {n} files signed")
+
+
+def pick_adapter(prefix):
+    """Index for registry "Network Adapter": TCPProtocol.dll takes h_addr_list[index] of
+    gethostbyname(hostname) as the game's own address (sockets themselves bind to any address).
+    prefix None = the address of the default route; else the first address starting with prefix
+    (e.g. "100." for Tailscale, "25." for Hamachi). Returns (index, ip, all) or None."""
+    import socket
+
+    addrs = socket.gethostbyname_ex(socket.gethostname())[2]
+    want = None
+    if prefix is None:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as u:
+                u.connect(("192.0.2.1", 9))  # no packet is sent for UDP connect
+                want = u.getsockname()[0]
+        except OSError:
+            return None
+    for i, a in enumerate(addrs):
+        if (prefix is None and a == want) or (prefix is not None and a.startswith(prefix)):
+            return i, a, addrs
+    return None
 
 
 def default_stock(game: Path) -> Path:
@@ -630,7 +662,8 @@ def choose_features(state: dict, only, skip) -> list:
     return [f for f in FEATURES if f in base and f not in (skip or [])]
 
 
-def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=None, zoom=None) -> None:
+def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=None, zoom=None,
+          net=None) -> None:
     orig = game / STATE_DIR / "orig"
     orig.mkdir(parents=True, exist_ok=True)
     state = load_state(game)
@@ -668,6 +701,7 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     print("intro movies: removed")
 
     byte_patches(game, CMDLINE_FIX, True, "host/join command line fix")
+    byte_patches(game, OPENSPY, "openspy" in feats, "openspy")
     byte_patches(game, BORDERLESS, borderless, "borderless")
     byte_patches(game, SMOOTH_SCROLL, "smooth-scroll" in feats, "smooth-scroll")
     byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0 (old)")
@@ -696,6 +730,13 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     # 400+ fps with tearing. Rendering stays decoupled from the simulation (own physics thread).
     reg = {"Full Screen Mode": 1, "Game Window Width": w, "Game Window Height": h,
            "Custom Refresh Rate": hz, "Wait for VSync": 1}
+    net = state.get("net") if net is None else (None if net == "auto" else net)
+    picked = pick_adapter(net)
+    if picked:
+        reg["Network Adapter"] = picked[0]
+        print(f"network: adapter {picked[0]} = {picked[1]} (of {', '.join(picked[2])})")
+    else:
+        print(f"network: no address matching {net or 'the default route'}; Network Adapter left as is")
     release = []
     if "zoom" in feats:
         # far clip = this/100 x 43.3; 60 (the autodetected minimum) cuts the far terrain at the
@@ -722,7 +763,8 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     print(f"REMASTER.txt + start scripts: written (fingerprint {fp})")
 
     state.update({"version": REMASTER_VERSION, "dxvk": DXVK_VERSION, "laa": True, "features": feats,
-                  "mode": [w, h, hz], "stock": str(stock), "fingerprint": fp, "zoom": zoom})
+                  "mode": [w, h, hz], "stock": str(stock), "fingerprint": fp, "zoom": zoom,
+                  "net": net})
     state.pop("borderless", None)
     (game / STATE_DIR / "state.json").write_text(json.dumps(state, indent=2))
 
@@ -769,7 +811,7 @@ def main() -> None:
     argv, opts, args = sys.argv[1:], {}, []
     while argv:
         a = argv.pop(0)
-        if a in ("--only", "--skip", "--stock", "--mutator", "--zoom"):
+        if a in ("--only", "--skip", "--stock", "--mutator", "--zoom", "--net"):
             if not argv:
                 sys.exit(__doc__)
             opts[a] = argv.pop(0)
@@ -792,7 +834,7 @@ def main() -> None:
             return None if v is None else [x.strip() for x in v.split(",") if x.strip()]
         apply(game, only=split(opts.get("--only")), skip=split(opts.get("--skip")),
               stock=opts.get("--stock"), rebuild=bool(opts.get("--rebuild")), mutator=opts.get("--mutator"),
-              zoom=float(opts["--zoom"]) if "--zoom" in opts else None)
+              zoom=float(opts["--zoom"]) if "--zoom" in opts else None, net=opts.get("--net"))
     else:
         {"revert": revert, "status": status}[args[0]](game)
 
