@@ -1,0 +1,668 @@
+"""Build the co-op Survival game mode (multiplayer scenario maps) into an overlay.
+
+Usage:
+    python tools/build_survival.py <game_dir> <overlay_dir> [--theme classic|zombie|all]
+                                   [--template "(4) plains"] [--boss-buffs] [--zombie-buffs]
+                                   [--no-diplomacy] [--table]
+
+Writes, for each theme, our own scenario built on a stock multiplayer map of the user's install:
+
+    <overlay>/Data/scenarios/<map>.scn        stock terrain/start positions + our trigger system
+    <overlay>/Data/map scripts/<map>.rmv      lobby entry (scenario maps are listed from *.rmv)
+
+Nothing is written into the game folder. The trigger format is documented in
+docs/scenario-format.md, the mode in docs/survival.md.
+
+Design in one paragraph: players 1-4 are lobby slots. Humans are addressed with the trigger
+player group "all humans" (3), the enemy with "all computer players" (4), so the mode does not
+depend on which lobby slot the computer takes. At start the computer's own AI is switched off,
+its citizens are removed, its town centre is made invulnerable and its gold/wood are kept at 0.
+Waves are created next to the computer's town centre at fixed game times (game time is part of
+the lockstep simulation, so every client fires the same trigger on the same tick) and sent
+attack-moving at the human town centres. Every 5th wave adds an enemy hero (boss). A second
+human town centre adds a co-op bonus group to every wave. Win: survive the last wave and kill
+every enemy unit. Lose: no human town centre left.
+"""
+import argparse
+import hashlib
+import struct
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import raf_scn as R  # noqa: E402
+
+# --------------------------------------------------------------------------- game vocabulary
+# Enums proven from the exe (docs/scenario-format.md section 5).
+PLAYER_GAIA, PLAYER_RANDOM_HUMAN, PLAYER_RANDOM_CPU, PLAYER_ALL_HUMANS, PLAYER_ALL_CPUS = 0, 1, 2, 3, 4
+TASK_MOVE, TASK_PATROL, TASK_ATTACK_MOVE = 0, 1, 2
+STANCE_AGGRESSIVE, STANCE_INVULNERABLE = 10, 14
+RES_GOLD, RES_WOOD = 3, 4
+ATTR_ATTACK, ATTR_HP, ATTR_SPEED = 40, 46, 51          # ChangeUnitClassAttribute ids
+STATE_IDLE = 5000
+AI_SETTING_ENABLED = 0
+UNITSET_BASE = 137                                      # EESMObject class filter: 137 + unitset index
+FOREVER = 999999                                        # GameHasAttribute upper bound (seconds)
+
+UNITSETS = {
+    'town_centers': 'A-All Town Centers (MP) (All Civs)',   # not the (All Civs) set: it holds 'INVISIBLE Capital'
+    'citizens': 'A-All Citizens (All Civs)',
+    'army': 'A-All Units (Non-buildings, non-heroes, non-siege)',   # 'A-All Military' holds buildings
+    'heroes': 'A-All Heroes (RTS MODE)',
+}
+
+PERSIAN = {
+    'sword': {1: 'A - Inf01 - Sword Infantry (Level 1 Persian)',
+              2: 'A - Inf02 - Sword Infantry (Level 2 Persian)',
+              3: 'A - Inf03 - Sword Infantry (Level 3 Persian)',
+              4: 'A - Inf04 - Sword Infantry (Level 4 Persian)',
+              5: 'A - Inf05 - Sword Infantry (level 5 Persian)'},
+    'spear': {1: 'A - Inf01 - Spear Infantry (Level 1 Persian)',
+              2: 'A - Inf02 - Spear Infantry (Level 2 Persian)',
+              3: 'A - Inf03 - Spear Infantry (Level 3 Persian)',
+              4: 'A - Inf04 - Spear Infantry (Level 4 Persian)',
+              5: 'A - Inf05 - Spear Infantry (Level 5 Persian)'},
+    'archer': {1: 'A - Arc01 - Archer (Level 1 Persian)',
+               2: 'A - Arc02 - Archer (Level 2 Persian)',
+               3: 'A - Arc03 - Archer (Level 3 Persian)',
+               4: 'A - Arc04 - Archer (Level 4 Persian)',
+               5: 'A - Arc05 - Archer (Level 5 Persian)'},
+    'cavalry': {1: 'A - Cav01 - Sword Cavalry (Level 1 Persian)',
+                2: 'A - Cav02 - Spear Cavalry (Level 2 Persian)',
+                3: 'A - Cav03 - Sword Cavalry (Level 3 Persian)',
+                4: 'A - Cav04 - Spear Cavalry (Level 4 Persian)',
+                5: 'A - Cav05 - Sword Cavalry (Level 5 Persian)'},
+    'elephant': {3: 'A - Cav03a - War Elephant (Archer) (Level 3 Persian)'},
+}
+
+# --------------------------------------------------------------------------- themes
+
+
+def classic_mix(k):
+    if k <= 2:
+        return {'sword': 60, 'spear': 40}
+    if k <= 5:
+        return {'sword': 40, 'spear': 30, 'archer': 30}
+    if k <= 10:
+        return {'sword': 30, 'spear': 25, 'archer': 25, 'cavalry': 20}
+    if k <= 15:
+        return {'sword': 25, 'spear': 20, 'archer': 25, 'cavalry': 20, 'elephant': 10}
+    return {'sword': 25, 'spear': 20, 'archer': 20, 'cavalry': 25, 'elephant': 10}
+
+
+def zombie_mix(k):
+    return {'sword': 55, 'spear': 45}
+
+
+THEMES = {
+    'classic': {
+        'map': '(4) survival',
+        'title': 'Survival',
+        'help': 'Co-op survival: 1-2 humans hold their town against 20 waves. Add exactly one '
+                'computer player as the enemy.',
+        'roster': PERSIAN,
+        'mix': classic_mix,
+        'size': lambda k: round(3 + 1.25 * k + 0.03 * k * k),
+        'coop_bonus': 0.5,
+        'waves': 20,
+        'first_wave': 240,
+        'intervals': [(5, 150), (10, 135), (15, 120), (20, 110)],   # (up to wave, seconds)
+        'boss_breather': 30,
+        'level': lambda k: min(5, 1 + (k - 1) // 4),
+        'bosses': {5: [('A - Inf00 - Sargon Melee - RTS mode (Persian)', 'Sargon')],
+                   10: [('A - Inf00 - Nebechadnezzar Melee - RTS mode (Persian)', 'Nebuchadnezzar')],
+                   15: [('A - Inf00 - G Caesar Melee - RTS mode (Rome)', 'Germanicus')],
+                   20: [('A - Inf00 - J Caesar Melee - RTS mode (Rome)', 'Julius Caesar'),
+                        ('A - Inf00 - Ramses Melee - RTS mode (Egypt)', 'Ramses')]},
+        'boss_hp_bonus': {5: 50, 10: 100, 15: 150, 20: 200},       # percent, --boss-buffs only
+        'environment': None,
+        'final_environment': 'hdri stormy weather',
+        'unit_mods': [],
+        'sounds': {'wave': 'a_warning bell', 'boss': 'a_hero horn', 'win': 'a_completion bell'},
+        'text': {
+            'intro': '/r225/g185/b35SURVIVAL/r255/g255/b255  Hold your town for %(waves)d waves. '
+                     'The enemy marches from its camp. Every 5th wave is led by a hero.',
+            'wave': '/r225/g185/b35Wave %(k)d of %(waves)d/r255/g255/b255 is coming!',
+            'boss': '/r255/g80/b80%(boss)s/r255/g255/b255 leads wave %(k)d!',
+            'next': 'Wave %(k)d in',
+            'last': 'Last wave: destroy every enemy',
+            'win': '/r225/g185/b35Victory!/r255/g255/b255 The town stands.',
+            'lose': '/r255/g80/b80The town has fallen.',
+        },
+    },
+    'zombie': {
+        'map': '(4) survival zombies',
+        'title': 'Survival: Zombies',
+        'help': 'Halloween survival: the dead walk at night. Slow, tough, melee only, many. '
+                'Add exactly one computer player as the horde.',
+        'roster': {'sword': PERSIAN['sword'], 'spear': PERSIAN['spear']},
+        'mix': zombie_mix,
+        'size': lambda k: round(1.4 * (3 + 1.25 * k + 0.03 * k * k)),
+        'coop_bonus': 0.5,
+        'waves': 20,
+        'first_wave': 180,
+        'intervals': [(5, 120), (10, 110), (15, 100), (20, 95)],
+        'boss_breather': 30,
+        'level': lambda k: min(5, 1 + (k - 1) // 4),
+        'bosses': {5: [('A - Inf00 - Gladiator Melee - RTS mode (Minotaur)', 'The Minotaur')],
+                   10: [('A - Inf00 - Gladiator Melee - RTS mode (Minotaur)', 'The Minotaur')] * 2,
+                   15: [('A - Inf00 - Gladiator Melee - RTS mode (Minotaur)', 'The Minotaur')] * 3,
+                   20: [('A - Inf00 - Gladiator Melee - RTS mode (Minotaur)', 'The Minotaur')] * 4},
+        'boss_hp_bonus': {},
+        'environment': 'hdri grassland night',
+        'final_environment': 'hdri desert night ocean',
+        # --zombie-buffs: applied once to every zombie unit class via a template unit
+        'unit_mods': [(ATTR_HP, 0, 100, 'HP +100%'), (ATTR_SPEED, 1, 40, 'speed -40%')],
+        'sounds': {'wave': 'a_warning bell', 'boss': 'a_hero horn', 'win': 'a_completion bell'},
+        'text': {
+            'intro': '/r150/g255/b150THE DEAD WALK/r255/g255/b255  Survive %(waves)d nights of the '
+                     'horde. They are slow, but they never stop coming.',
+            'wave': '/r150/g255/b150Horde %(k)d of %(waves)d/r255/g255/b255 rises!',
+            'boss': '/r255/g80/b80%(boss)s/r255/g255/b255 walks with horde %(k)d!',
+            'next': 'Horde %(k)d in',
+            'last': 'Last horde: destroy every walker',
+            'win': '/r150/g255/b150Dawn breaks./r255/g255/b255 You survived.',
+            'lose': '/r255/g80/b80The town is overrun.',
+        },
+    },
+}
+
+# --------------------------------------------------------------------------- db lookups
+
+
+def db_records(game_dir, table, rec_size):
+    data = (Path(game_dir) / 'Data' / 'db' / (table + '.dat')).read_bytes()
+    (count,) = struct.unpack_from('<I', data, 0)
+    if 4 + count * rec_size > len(data):
+        raise ValueError('%s: unexpected size' % table)
+    return [data[4 + i * rec_size:4 + (i + 1) * rec_size] for i in range(count)]
+
+
+def cstr(raw, n=100):
+    return raw[:n].split(b'\0', 1)[0].decode('cp1252')
+
+
+def unitset_members(raw):
+    """dbunitset record (272 bytes): char[100] name, i32 id, i32 index, 15 x i32 (?),
+    15 x i32 object types, 5 x i32 included sets, 5 x i32 excluded sets, i32 flag."""
+    v = struct.unpack_from('<43i', raw, 100)
+    return {'types': [x for x in v[17:32] if x > 0], 'include': [x for x in v[32:37] if x >= 0],
+            'exclude': [x for x in v[37:42] if x >= 0], 'flag': v[42]}
+
+
+class Vocab:
+    def __init__(self, game_dir, unitset_base=UNITSET_BASE):
+        self.unitset_base = unitset_base
+        self.objects = [cstr(r) for r in db_records(game_dir, 'dbobjects', 2012)]
+        self._sets = db_records(game_dir, 'dbunitset', 272)
+        self.unitsets = [cstr(r) for r in self._sets]
+        self._obj = {}
+        for i, n in enumerate(self.objects):
+            self._obj.setdefault(n, []).append(i)
+
+    def unit(self, name):
+        hits = self._obj.get(name)
+        if not hits:
+            raise KeyError('unit type not in dbobjects: %r' % name)
+        if len(hits) > 1:
+            raise KeyError('unit name not unique in dbobjects: %r' % name)
+        return hits[0]
+
+    def unitset(self, name):
+        hits = [i for i, n in enumerate(self.unitsets) if n == name]
+        if not hits:
+            raise KeyError('unit set %r not found' % name)
+        # the stock table has exact duplicates (same members, other id); they are equivalent
+        members = {repr(unitset_members(self._sets[i])) for i in hits}
+        if len(members) != 1:
+            raise KeyError('unit set %r is ambiguous (%d different records)' % (name, len(hits)))
+        return self.unitset_base + hits[0]
+
+    def set_members(self, ref):
+        return unitset_members(self._sets[ref - self.unitset_base])
+
+
+# --------------------------------------------------------------------------- schedule
+
+
+def wave_times(theme):
+    times, t = [], theme['first_wave']
+    for k in range(1, theme['waves'] + 1):
+        times.append(t)
+        gap = next(s for upto, s in theme['intervals'] if k <= upto)
+        if k in theme['bosses']:
+            gap += theme['boss_breather']
+        t += gap
+    return times
+
+
+def wave_groups(theme, k, scale=1.0):
+    """[(role, level, count)] for wave k; counts sum to round(size*scale)."""
+    total = max(1, round(theme['size'](k) * scale))
+    mix = {r: w for r, w in theme['mix'](k).items() if r in theme['roster']}
+    want = theme['level'](k)
+    groups, left = [], total
+    roles = sorted(mix, key=lambda r: -mix[r])
+    wsum = sum(mix.values())
+    for i, role in enumerate(roles):
+        n = left if i == len(roles) - 1 else min(left, round(total * mix[role] / wsum))
+        if role == 'elephant':
+            n = min(n, max(1, total // 8))
+        if n <= 0:
+            continue
+        levels = sorted(theme['roster'][role])
+        below = [lv for lv in levels if lv <= want]
+        lv = below[-1] if below else levels[0]
+        groups.append((role, lv, n))
+        left -= n
+    if left > 0 and groups:
+        role, lv, n = groups[0]
+        groups[0] = (role, lv, n + left)
+    return groups
+
+
+def boss_label(bosses):
+    if not bosses:
+        return ''
+    labels = [lb for _, lb in bosses]
+    if len(set(labels)) == 1 and len(labels) > 1:
+        return '%d x %s' % (len(labels), labels[0])
+    return ' and '.join(labels)
+
+
+# --------------------------------------------------------------------------- builder
+
+
+def S(text):
+    return R.S(text)
+
+
+class Builder:
+    """Appends our components to a parsed EEScenarioManager, keeping the game's index rules:
+    condition refs = 3 + memory index, effect refs = 1 + index, object refs = 1 + index,
+    area refs = 2 + index, trigger refs = index; memory condition order = non-ObjectExists
+    conditions first, then ObjectExists (the loader moves them, FUN_008a1c00)."""
+
+    def __init__(self, m):
+        self.m = m
+        tail = R.parse_tail(R.Reader(m.tail), (4, 0))
+        self.ids = list(tail['u6d0'])     # last used ids: trigger, condition, effect, object, area
+        self.base_triggers = len(m.triggers)
+        self.cond_new = []                # (kind_is_object_exists, dict)
+        self.trig_new = []
+
+    def _id(self, slot):
+        self.ids[slot] += 1
+        return self.ids[slot]
+
+    # objects --------------------------------------------------------------------------------
+    def obj(self, name, player, unit_type=0, unit_class=0, count=(1, 9999), near=None,
+            state=None):
+        o = {'name': S(name), 'desc': S(''), 'units': [], 'bdc': 0, 'player': player,
+             'u80': unit_class, 'u84': unit_type, 'u94': 0,
+             'class_name': S(str(count[0])), 'unit_name': S(str(count[1])), 'bdd': 1,
+             'ub4': 0, 'ub8': 0, 'ubc': 0, 'uc0': 0, 'uc4': 0, 'uc8': 0, 'u88': 0, 'u8c': 0,
+             'u90': 0, 'u98': 0, 'u9c': 0, 'ua0': 0, 'ua4': 1, 'ua8': 1000, 'uac': 7, 'bde': 0,
+             'ub0': self._id(3), 'bdf': 0, 'be0': 0, 'be1': 0, 'be2': 0, 'ucc': 0, 'ud0': 0,
+             'ud4': 0, 'ud8': 0}
+        if near is not None:              # place/select within line of sight of object `near`
+            o['ub8'], o['u90'], o['u8c'] = 1, near, 0
+        if state is not None:
+            o['uc4'], o['ua8'] = 1, state
+        self.m.objects.append(o)
+        return len(self.m.objects)        # object ref (1-based, 0 = default object)
+
+    # conditions -----------------------------------------------------------------------------
+    def cond(self, typ, name, **fields):
+        spec = R.CONDITIONS[typ][1]
+        o = {k: 0 for k, t in spec if t != 'uws'}
+        o.update({k: S('') for k, t in spec if t == 'uws'})
+        o.update(fields)
+        o.update({'name': S(name), 'desc': S(''), 'c_unused38': self._id(1), '_type': typ})
+        self.cond_new.append(o)
+        return ('C', len(self.cond_new) - 1)
+
+    def time_after(self, seconds, name=None):
+        return self.cond(7, name or 'Game time > %d s' % seconds, b3c=0, b3d=1, b3e=0, u40=1,
+                         u48=FOREVER, u44=seconds, u4c=0)
+
+    def exists(self, obj_ref, name):
+        return self.cond(1, name, object=obj_ref)
+
+    # effects --------------------------------------------------------------------------------
+    def eff(self, key, name, **fields):
+        spec = R.EFFECTS[key][1]
+        if not isinstance(spec, list):
+            raise ValueError('builder does not write %s' % (key,))
+        o = {k: 0 for k, t in spec if t not in ('uws', 'f32')}
+        o.update({k: 0.0 for k, t in spec if t == 'f32'})
+        o.update({k: S('') for k, t in spec if t == 'uws'})
+        o.update(fields)
+        for k, v in list(o.items()):
+            if isinstance(v, str):
+                o[k] = S(v)
+        o.update({'name': S(name), 'desc': S(''), 'e_unused38': self._id(2),
+                  '_cat': key[0], '_type': 0xffffffff if key[0] == 3 else key[1]})
+        self.m.effects.append(o)
+        return len(self.m.effects)        # effect ref (1-based, 0 = default "do nothing")
+
+    def chat(self, text, seconds=10):
+        return self.eff((4, 3), 'MSG ' + text[:40], text=text, u54=PLAYER_ALL_HUMANS,
+                        u58=seconds, b5c=0)
+
+    def sound(self, wav):
+        return self.eff((4, 0), 'SOUND ' + wav, sound=wav, f54=0.95, b60=0, i58=1, u5c=0, b61=0)
+
+    def counter(self, title, seconds, show_time=True):
+        return self.eff((5, 6), 'COUNTER ' + title, counter=title, i6c=seconds, b70=1,
+                        b71=0 if show_time else 1, u74=0, text54='', b72=0)
+
+    # triggers -------------------------------------------------------------------------------
+    def trigger(self, name, conds, effects, looping=False, on=True, true_for=0):
+        """conds: list of (cond_handle, negate) ANDed; effects: list of (effect_ref, delay_cs)."""
+        t = {'name': S(name), 'desc': S(''), 'on': 1 if on else 0, 'looping': 1 if looping else 0,
+             'b8d': 0, 'u7c': 0, 'b8f': 0, 'true_for': true_for, 'u84': 0, 'f78': 0.0,
+             'f74': 500.0, 'u88': self._id(0), '_conds': conds,
+             'then': [(delay, 1 if i < len(effects) - 1 else 0, ref)
+                      for i, (ref, delay) in enumerate(effects)],
+             'else': [(0, 0, 0)]}
+        self.trig_new.append(t)
+        return self.base_triggers + len(self.trig_new) - 1
+
+    # finish ---------------------------------------------------------------------------------
+    def finish(self):
+        m = self.m
+        old = m.conditions
+        # memory order after load: non-ObjectExists first, then ObjectExists
+        nonoe = [('old', i) for i, c in enumerate(old) if c['_type'] != 1] + \
+                [('new', i) for i, c in enumerate(self.cond_new) if c['_type'] != 1]
+        oe = [('old', i) for i, c in enumerate(old) if c['_type'] == 1] + \
+             [('new', i) for i, c in enumerate(self.cond_new) if c['_type'] == 1]
+        order = nonoe + oe
+        ref = {key: 3 + n for n, key in enumerate(order)}
+        old_ref = {3 + i: ref[('old', i)] for i in range(len(old))}
+        m.conditions = [(old if src == 'old' else self.cond_new)[i] for src, i in order]
+        for t in m.triggers:              # remap the template's own triggers
+            t['if'] = [(neg, op, old_ref.get(c, c)) for neg, op, c in t['if']]
+        for t in self.trig_new:
+            conds = t.pop('_conds')
+            if not conds:
+                t['if'] = [(0, 0, 0)]
+            else:
+                t['if'] = [(1 if neg else 0, 1 if i < len(conds) - 1 else 0, ref[('new', h[1])])
+                           for i, (h, neg) in enumerate(conds)]
+            m.triggers.append(t)
+        # last-used id counters at the start of the tail (u6d0[5])
+        m.tail = struct.pack('<5I', *self.ids) + m.tail[20:]
+
+
+# --------------------------------------------------------------------------- the mode
+
+
+def build_mode(m, theme, vocab, opts):
+    b = Builder(m)
+    waves = theme['waves']
+    times = wave_times(theme)
+    sets = {k: vocab.unitset(v) for k, v in UNITSETS.items()}
+
+    # selections ------------------------------------------------------------------------------
+    o_enemy_tc = b.obj('SV Enemy town centres', PLAYER_ALL_CPUS, unit_class=sets['town_centers'],
+                       count=(1, 99))
+    o_enemy_cit = b.obj('SV Enemy citizens', PLAYER_ALL_CPUS, unit_class=sets['citizens'],
+                        count=(1, 9999))
+    o_enemy_army = b.obj('SV Enemy army', PLAYER_ALL_CPUS, unit_class=sets['army'],
+                         count=(1, 9999))
+    o_enemy_heroes = b.obj('SV Enemy heroes', PLAYER_ALL_CPUS, unit_class=sets['heroes'],
+                           count=(1, 99))
+    o_enemy_idle = b.obj('SV Enemy army idle', PLAYER_ALL_CPUS, unit_class=sets['army'],
+                         count=(1, 9999), state=STATE_IDLE)
+    o_human_tc = b.obj('SV Human town centres', PLAYER_ALL_HUMANS,
+                       unit_class=sets['town_centers'], count=(1, 99))
+    o_human_tc2 = b.obj('SV Two human town centres', PLAYER_ALL_HUMANS,
+                        unit_class=sets['town_centers'], count=(2, 99))
+
+    fmt = dict(waves=waves)
+    T = theme['text']
+
+    # setup -----------------------------------------------------------------------------------
+    setup = [(b.eff((6, 4), 'SV Computer AI off', setting=AI_SETTING_ENABLED, on=0,
+                    player=PLAYER_ALL_CPUS), 0),
+             (b.eff((1, 7), 'SV Enemy TC invulnerable', stance=STANCE_INVULNERABLE,
+                    object=o_enemy_tc), 0),
+             (b.eff((1, 4), 'SV Remove enemy citizens', object=o_enemy_cit), 0),
+             # the computer's own start army and hero would otherwise join wave 1 and could
+             # block the victory check (hero revive); waves bring their own units
+             (b.eff((1, 4), 'SV Remove enemy start army', object=o_enemy_army), 0),
+             (b.eff((1, 4), 'SV Remove enemy start heroes', object=o_enemy_heroes), 0),
+             (b.eff((2, 4), 'SV Enemy gold 0', resource=RES_GOLD, amount=0, text='0',
+                    player=PLAYER_ALL_CPUS), 0),
+             (b.eff((2, 4), 'SV Enemy wood 0', resource=RES_WOOD, amount=0, text='0',
+                    player=PLAYER_ALL_CPUS), 0),
+             (b.chat(T['intro'] % fmt, 20), 100),
+             (b.counter(T['next'] % {'k': 1}, times[0] - 2), 100)]
+    if theme['environment']:
+        setup.append((b.eff((5, 7), 'SV Environment', env=theme['environment'], i54=10, b58=1,
+                            b59=1), 0))
+    if opts.force_diplomacy:      # FUN_008c36c0 resolves both sides with FUN_0089c9a0
+        setup += [(b.eff((2, 3), 'SV Humans allied', other=PLAYER_ALL_HUMANS, stance=0, b48=1,
+                         player=PLAYER_ALL_HUMANS), 0),
+                  (b.eff((2, 3), 'SV Humans vs computers', other=PLAYER_ALL_CPUS, stance=1,
+                         b48=1, player=PLAYER_ALL_HUMANS), 0)]
+    b.trigger('SV Setup', [(b.time_after(1), False)], setup)
+
+    # keep the computer passive: no citizens, no money (looping every ~20 s)
+    b.trigger('SV Keep enemy passive', [(b.time_after(5), False)],
+              [(b.eff((1, 4), 'SV Remove enemy citizens (loop)', object=o_enemy_cit), 0),
+               (b.eff((2, 4), 'SV Enemy gold 0 (loop)', resource=RES_GOLD, amount=0, text='0',
+                      player=PLAYER_ALL_CPUS), 0),
+               (b.eff((2, 4), 'SV Enemy wood 0 (loop)', resource=RES_WOOD, amount=0, text='0',
+                      player=PLAYER_ALL_CPUS), 0),
+               (b.eff((1, 7), 'SV Enemy TC invulnerable (loop)', stance=STANCE_INVULNERABLE,
+                      object=o_enemy_tc), 0)],
+              looping=True, true_for=20)
+
+    # zombie class buffs (experimental): one template unit per type, buff its class, remove it
+    if theme['unit_mods'] and opts.zombie_buffs:
+        eff = []
+        types = sorted({vocab.unit(n) for role in theme['roster'].values() for n in role.values()})
+        for ut in types:
+            o_t = b.obj('SV Template %d' % ut, PLAYER_ALL_CPUS, unit_type=ut, count=(1, 1),
+                        near=o_enemy_tc)
+            eff.append((b.eff((1, 0), 'SV Create template %d' % ut, object=o_t), 0))
+            for attr, op, val, label in theme['unit_mods']:
+                eff.append((b.eff((1, 12), 'SV Zombie %s %d' % (label, ut), attr=attr, op=op,
+                                  value=val, b4c=1, u50=0, i54=-1, object=o_t), 100))
+            eff.append((b.eff((1, 4), 'SV Remove template %d' % ut, object=o_t), 200))
+        b.trigger('SV Zombie class buffs', [(b.time_after(2), False)], eff)
+
+    # waves -----------------------------------------------------------------------------------
+    order_army = b.eff((1, 5), 'SV Army attack-move to human TCs', target=o_human_tc,
+                       task=TASK_ATTACK_MOVE, b48=0, object=o_enemy_army)
+    order_heroes = b.eff((1, 5), 'SV Heroes attack-move to human TCs', target=o_human_tc,
+                         task=TASK_ATTACK_MOVE, b48=0, object=o_enemy_heroes)
+    stance_army = b.eff((1, 7), 'SV Army aggressive', stance=STANCE_AGGRESSIVE,
+                        object=o_enemy_army)
+    snd_wave = b.sound(theme['sounds']['wave'])
+    snd_boss = b.sound(theme['sounds']['boss'])
+    plan = []
+    for k in range(1, waves + 1):
+        t = times[k - 1]
+        f = dict(fmt, k=k)
+        eff = [(b.chat(T['wave'] % f, 12), 0), (snd_wave, 0)]
+        groups = wave_groups(theme, k)
+        for role, lv, n in groups:
+            ut = vocab.unit(theme['roster'][role][lv])
+            o = b.obj('SV W%02d %s L%d x%d' % (k, role, lv, n), PLAYER_ALL_CPUS, unit_type=ut,
+                      count=(n, n), near=o_enemy_tc)
+            eff.append((b.eff((1, 0), 'SV W%02d create %s' % (k, role), object=o), 0))
+        bosses = theme['bosses'].get(k, [])
+        for i, (hero, label) in enumerate(bosses):
+            ut = vocab.unit(hero)
+            o = b.obj('SV W%02d boss %d' % (k, i + 1), PLAYER_ALL_CPUS, unit_type=ut, count=(1, 1),
+                      near=o_enemy_tc)
+            eff.append((b.eff((1, 0), 'SV W%02d create boss %d' % (k, i + 1), object=o), 0))
+            if opts.boss_buffs and k in theme['boss_hp_bonus'] and i == 0:
+                o_b = b.obj('SV W%02d boss class' % k, PLAYER_ALL_CPUS, unit_type=ut,
+                            count=(1, 99))
+                eff.append((b.eff((1, 12), 'SV W%02d boss HP' % k, attr=ATTR_HP, op=0,
+                                  value=theme['boss_hp_bonus'][k], b4c=1, u50=0, i54=-1,
+                                  object=o_b), 50))
+        if bosses:
+            names = boss_label(bosses)
+            eff += [(b.chat(T['boss'] % dict(f, boss=names), 15), 50), (snd_boss, 50),
+                    (b.eff((2, 15), 'SV W%02d hero bot AI on' % k, on=1,
+                           player=PLAYER_ALL_CPUS), 100)]
+        if k == waves and theme['final_environment']:
+            eff.append((b.eff((5, 7), 'SV Final environment', env=theme['final_environment'],
+                              i54=20, b58=1, b59=1), 0))
+        eff += [(stance_army, 100), (order_army, 150), (order_heroes, 150)]
+        if k < waves:
+            eff.append((b.counter(T['next'] % {'k': k + 1}, times[k] - t - 1), 200))
+        else:
+            eff.append((b.counter(T['last'], 0, show_time=False), 200))
+        b.trigger('SV Wave %02d' % k, [(b.time_after(t, 'SV Wave %02d time' % k), False)], eff)
+        # co-op bonus: a second human town centre adds half a wave
+        bonus = wave_groups(theme, k, theme['coop_bonus'])
+        beff = []
+        for role, lv, n in bonus:
+            ut = vocab.unit(theme['roster'][role][lv])
+            o = b.obj('SV W%02d bonus %s L%d x%d' % (k, role, lv, n), PLAYER_ALL_CPUS,
+                      unit_type=ut, count=(n, n), near=o_enemy_tc)
+            beff.append((b.eff((1, 0), 'SV W%02d bonus %s' % (k, role), object=o), 50))
+        beff += [(stance_army, 150), (order_army, 200)]
+        b.trigger('SV Wave %02d co-op bonus' % k,
+                  [(b.time_after(t, 'SV Wave %02d bonus time' % k), False),
+                   (b.exists(o_human_tc2, 'SV Two human TCs exist (W%02d)' % k), False)], beff)
+        plan.append({'wave': k, 'time': t, 'groups': groups, 'bonus': bonus,
+                     'bosses': boss_label(bosses)})
+
+    # idle enemies attack again
+    b.trigger('SV Idle enemies attack', [(b.exists(o_enemy_idle, 'SV Idle enemy army exists'),
+                                          False)],
+              [(stance_army, 0),
+               (b.eff((1, 5), 'SV Idle army attack-move', target=o_human_tc,
+                      task=TASK_ATTACK_MOVE, b48=0, object=o_enemy_idle), 0), (order_heroes, 0)],
+              looping=True, true_for=8)
+
+    # end of game -----------------------------------------------------------------------------
+    c_army = b.exists(o_enemy_army, 'SV Enemy army exists')
+    c_heroes = b.exists(o_enemy_heroes, 'SV Enemy heroes exist')
+    b.trigger('SV Victory', [(b.time_after(times[-1] + 10, 'SV After last wave'), False),
+                             (c_army, True), (c_heroes, True)],
+              [(b.chat(T['win'], 30), 0), (b.sound(theme['sounds']['win']), 0),
+               (b.eff((2, 0), 'SV Victory humans', player=PLAYER_ALL_HUMANS), 300),
+               (b.eff((2, 2), 'SV Defeat computers', player=PLAYER_ALL_CPUS), 400)],
+              true_for=2)
+    b.trigger('SV Defeat', [(b.time_after(30, 'SV Game running'), False),
+                            (b.exists(o_human_tc, 'SV Human TC exists'), True)],
+              [(b.chat(T['lose'], 30), 0),
+               (b.eff((2, 2), 'SV Defeat humans', player=PLAYER_ALL_HUMANS), 300)],
+              true_for=3)
+    b.finish()
+    return plan
+
+
+# --------------------------------------------------------------------------- file level
+
+
+def test_schedule(theme):
+    """Same triggers, compressed clock and small waves, so a live test reaches boss waves,
+    victory and the co-op bonus in about 8 minutes."""
+    t = dict(theme)
+    size = theme['size']
+    t['first_wave'], t['intervals'], t['boss_breather'] = 30, [(theme['waves'], 20)], 5
+    t['size'] = lambda k: max(1, round(size(k) / 4))
+    t['help'] = 'TEST SCHEDULE BUILD. ' + theme['help']
+    return t
+
+
+def map_id(name):
+    """Unique, stable map id (the stock ones look like editor tick counts ~0x12xxxxx)."""
+    return 0x7A000000 | (int(hashlib.sha1(name.encode()).hexdigest(), 16) & 0x00FFFFFF)
+
+
+def build_scn(template_path, theme, vocab, opts):
+    f = R.load_any(template_path)
+    if any(c[0:2] != [4, 0] for c in f.chunks):
+        raise ValueError('template chunk version is not 4.0')
+    m = R.Manager.parse(f.get(6))
+    plan = build_mode(m, theme, vocab, opts)
+    raw = m.serialize()
+    f.put(6, raw)
+    h = R.parse_header(f.header)
+    file_name = theme['map'] + '.scn'
+    pretty = theme['map'].replace('survival zombies', 'Survival Zombies').replace(
+        'survival', 'Survival') + '.scn'
+    h['name'] = S(pretty)
+    h['map_name'] = S(pretty)
+    h['desc'] = S(theme['help'])
+    h['map_id'] = map_id(file_name)
+    f.header = R.build_header(h)
+    f.trailer = struct.pack('<I', h['map_id'])      # the file ends with the map id again
+    return f.to_bytes(), raw, plan
+
+
+def rmv_text(theme):
+    return ('// %s - generated by tools/build_survival.py (raf-remaster). Scenario map entry:\n'
+            '// the game lists Data\\map scripts\\*.rmv and loads Data\\scenarios\\<same name>.scn\n'
+            'UseMapGenerator\t\t"Default"\n'
+            'DisplayHelp\t\t(%s)\n' % (theme['title'], theme['help'])).replace('\n', '\r\n')
+
+
+def format_table(plan, theme, vocab):
+    lines = ['| wave | time | units (2 humans) | composition (level) | boss |',
+             '|---:|---:|---:|---|---|']
+    for p in plan:
+        total = sum(n for _, _, n in p['groups']) + sum(n for _, _, n in p['bonus'])
+        solo = sum(n for _, _, n in p['groups'])
+        comp = ', '.join('%d %s' % (n, r) for r, lv, n in p['groups'])
+        lv = theme['level'](p['wave'])
+        lines.append('| %d | %d:%02d | %d (solo %d) | %s (L%d) | %s |' % (
+            p['wave'], p['time'] // 60, p['time'] % 60, total, solo, comp, lv,
+            p['bosses'] or '-'))
+    return '\n'.join(lines)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('game_dir')
+    ap.add_argument('overlay_dir')
+    ap.add_argument('--theme', default='all', choices=['all'] + sorted(THEMES))
+    ap.add_argument('--template', default='(4) plains')
+    ap.add_argument('--boss-buffs', action='store_true', help='experimental: boss class HP bonus')
+    ap.add_argument('--zombie-buffs', action='store_true',
+                    help='experimental: zombie class HP/speed changes via template units')
+    ap.add_argument('--no-diplomacy', dest='force_diplomacy', action='store_false',
+                    help='do not set "humans allied, computers hostile" by trigger at start')
+    ap.add_argument('--table', action='store_true', help='print the wave tables (markdown)')
+    ap.add_argument('--unitset-base', type=int, default=UNITSET_BASE,
+                    help='class value of dbunitset record 0 (137 per the runtime code; the '
+                         'campaign files suggest 134, see docs/scenario-format.md 3.5)')
+    ap.add_argument('--test-schedule', action='store_true',
+                    help='LIVE TESTING ONLY: wave 1 at 0:30, 20 s apart, 1/4 size')
+    opts = ap.parse_args(argv)
+    game = Path(opts.game_dir)
+    template = game / 'Data' / 'scenarios' / (opts.template + '.scn')
+    vocab = Vocab(game, opts.unitset_base)
+    out = Path(opts.overlay_dir)
+    themes = sorted(THEMES) if opts.theme == 'all' else [opts.theme]
+    for name in themes:
+        theme = THEMES[name]
+        if opts.test_schedule:
+            theme = test_schedule(theme)
+        data, raw, plan = build_scn(template, theme, vocab, opts)
+        scn = out / 'Data' / 'scenarios' / (theme['map'] + '.scn')
+        rmv = out / 'Data' / 'map scripts' / (theme['map'] + '.rmv')
+        scn.parent.mkdir(parents=True, exist_ok=True)
+        rmv.parent.mkdir(parents=True, exist_ok=True)
+        scn.write_bytes(data)
+        rmv.write_bytes(rmv_text(theme).encode('cp1252'))
+        print('%-8s %s  %d bytes  sha256 %s' % (name, scn, len(data),
+                                               hashlib.sha256(data).hexdigest()[:12]))
+        if opts.table:
+            print(format_table(plan, theme, vocab))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

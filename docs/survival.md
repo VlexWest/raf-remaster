@@ -1,0 +1,210 @@
+# Survival (co-op) and Survival: Zombies
+
+## Kurzfassung (Deutsch)
+
+**Was es ist:** zwei neue Mehrspieler-Karten, „(4) Survival“ und „(4) Survival Zombies“. Ein
+oder zwei Menschen verteidigen ihre Stadt gegen 20 Angriffswellen eines Computergegners. Die
+Wellen kommen in festen Abständen (erste nach 4 Minuten, danach alle 2½ bis knapp 2 Minuten),
+werden größer und steigen von Stufe 1 bis 5 auf. Jede 5. Welle führt ein feindlicher Held an
+(Sargon, Nebukadnezar, Germanicus, zum Schluss Julius Caesar und Ramses). Ein Countdown oben
+zeigt, wann die nächste Welle kommt. Gewonnen ist, wer nach der 20. Welle alle Feinde besiegt
+hat; verloren ist, wenn kein Stadtzentrum der Menschen mehr steht. Zu zweit gibt es pro Welle
+50 % mehr Gegner (solange beide ein Stadtzentrum haben), allein entsprechend weniger.
+
+**Zombies (Halloween):** dieselbe Mechanik bei Nacht, nur Nahkämpfer, viel mehr Gegner,
+der Minotaurus als Boss (1, 2, 3, dann 4 auf einmal). Optional (Schalter `--zombie-buffs`):
+Zombies mit doppelten Lebenspunkten und 40 % langsamer.
+
+**Wie es gebaut ist:** keine Programmänderung, nur Kartendaten. Ich habe das Trigger-Format der
+Szenariodateien vollständig entschlüsselt (`docs/scenario-format.md`, alle 76 Original-Szenarien
+lesen und schreiben sich bitgenau zurück) und schreibe unsere Trigger in eine Kopie der Karte
+„(4) Plains“ aus deiner Installation. Trigger laufen in der synchronen Spielsimulation, also
+für beide Rechner gleich.
+
+**Starten:** beide Spieler brauchen dieselben Dateien. Im Lobby-Fenster Karte „(4) Survival“
+wählen, Menschen auf Platz 1 und 2 (gleiches Team), **genau einen Computergegner** hinzufügen
+(beliebiger Platz, anderes Team), Rest leer. Solo: du plus ein Computer.
+
+**Stand:** gebaut und offline geprüft (Format-Rundlauf, Referenzen, Vokabular gegen die
+Originaldateien, Simulation der Trigger gegen eine Attrappe: Sieg, Solo, Niederlage, frühe
+Niederlage, Überlebende). **Im Spiel ist noch nichts getestet.** Die Checkliste unten sagt dem
+Spiel-Agenten genau, was er prüfen soll.
+
+---
+
+## 1. Vehicle and why
+
+| option | verdict |
+|---|---|
+| (a) multiplayer scenario `.scn` with triggers | **chosen.** MP maps are listed from `Data\map scripts\*.rmv` (scanned, unlike the 13 fixed random maps) and every shipped MP map already runs triggers in multiplayer (no-build zones, wine-jug respawn, gold caps, victory by hoarding). Triggers are part of the lockstep simulation. |
+| (b) random map script + scripted AI | rejected: `.rmv` random maps have no logic (placement only), the 13 names are fixed in the exe, and the skirmish AI is C++ tuned by numbers only (no way to script timed waves). |
+| (c) map scripts referenced by scenarios | not a thing: the scenario-map `.rmv` files only hold `UseMapGenerator` and string ids. |
+
+We do not write a map from scratch: the generator takes the user's own `(4) plains.scn`
+(terrain, start positions, its no-build-zone trigger) and appends our trigger system. Only the
+trigger chunk, the names and the map id change; every other chunk stays byte-identical
+(checked).
+
+## 2. Rules (both themes)
+
+* **Players.** Trigger player groups: humans = "all humans" (enum 3), enemy = "all computer
+  players" (enum 4). The mode does not care which lobby slot the computer gets.
+* **Start (t = 1 s).** Humans allied with each other and enemies of the computers (mutual).
+  The computer's own AI is switched off (AIToggleSetting 0), its start army, hero and citizens
+  are removed, its town centre made invulnerable, its gold and wood set to 0. A looping trigger
+  repeats the removal of citizens, the 0 resources and the invulnerability every 20 s.
+  Intro text (20 s) and an on-screen countdown to wave 1.
+* **Waves.** Wave k fires when the scenario clock passes its time (GameHasAttribute "game
+  time > t", one non-looping trigger per wave). Units are created within line of sight of the
+  computer's town centre, set to aggressive and ordered to attack-move to the human town
+  centres. The countdown is reset to the next wave. Every 8 s, enemy units that stand idle are
+  sent again.
+* **Co-op bonus.** A second trigger per wave adds 50 % (separate units) when at least two human
+  town centres exist. Solo play therefore gets 2/3 of the 2-player wave.
+* **Bosses.** Waves 5/10/15/20 add hero units (RTS-mode hero records) and switch on the
+  computer's hero bot AI so they use their powers. Optional `--boss-buffs`: +50/100/150/200 %
+  hit points on the boss class.
+* **Win.** 10 s after the last wave, when no enemy army unit and no enemy hero is left for 2 s:
+  victory for all humans, then defeat for the computers.
+* **Lose.** No human town centre for 3 s (after the first 30 s): defeat for all humans.
+  (Not "heroes": hero death is not a lose condition, heroes can be revived.)
+* **Unchanged:** economy, the humans' start, tech, standard diplomacy UI.
+
+### Wave table, classic (generated, `python tools/build_survival.py <game> <out> --table`)
+
+Enemy roster: Persian Sword/Spear Infantry, Archer, Sword/Spear Cavalry levels 1-5, War
+Elephant (Archer) level 3. Level = 1 + (wave-1)/4. Size = 3 + 1.25k + 0.03k² (solo), x1.5 with
+two town centres.
+
+| wave | time | units (2 humans) | composition (level) | boss |
+|---:|---:|---:|---|---|
+| 1 | 4:00 | 6 (solo 4) | 2 sword, 2 spear (L1) | - |
+| 2 | 6:30 | 9 (solo 6) | 4 sword, 2 spear (L1) | - |
+| 3 | 9:00 | 11 (solo 7) | 3 sword, 2 spear, 2 archer (L1) | - |
+| 4 | 11:30 | 12 (solo 8) | 3 sword, 2 spear, 3 archer (L1) | - |
+| 5 | 14:00 | 15 (solo 10) | 4 sword, 3 spear, 3 archer (L2) | Sargon |
+| 6 | 17:00 | 18 (solo 12) | 4 sword, 3 spear, 3 archer, 2 cavalry (L2) | - |
+| 7 | 19:15 | 19 (solo 13) | 4 sword, 3 spear, 3 archer, 3 cavalry (L2) | - |
+| 8 | 21:30 | 23 (solo 15) | 4 sword, 4 spear, 4 archer, 3 cavalry (L2) | - |
+| 9 | 23:45 | 25 (solo 17) | 5 sword, 4 spear, 4 archer, 4 cavalry (L3) | - |
+| 10 | 26:00 | 27 (solo 18) | 5 sword, 4 spear, 4 archer, 5 cavalry (L3) | Nebuchadnezzar |
+| 11 | 28:45 | 30 (solo 20) | 5 sword, 5 archer, 4 spear, 4 cavalry, 2 elephant (L3) | - |
+| 12 | 30:45 | 33 (solo 22) | 6 sword, 6 archer, 4 spear, 4 cavalry, 2 elephant (L3) | - |
+| 13 | 32:45 | 36 (solo 24) | 6 sword, 6 archer, 5 spear, 5 cavalry, 2 elephant (L4) | - |
+| 14 | 34:45 | 39 (solo 26) | 7 sword, 6 archer, 5 spear, 5 cavalry, 3 elephant (L4) | - |
+| 15 | 36:45 | 42 (solo 28) | 7 sword, 7 archer, 6 spear, 6 cavalry, 2 elephant (L4) | Germanicus |
+| 16 | 39:15 | 47 (solo 31) | 8 sword, 8 cavalry, 6 spear, 6 archer, 3 elephant (L4) | - |
+| 17 | 41:05 | 49 (solo 33) | 8 sword, 8 cavalry, 7 spear, 7 archer, 3 elephant (L5) | - |
+| 18 | 42:55 | 53 (solo 35) | 9 sword, 9 cavalry, 7 spear, 7 archer, 3 elephant (L5) | - |
+| 19 | 44:45 | 57 (solo 38) | 10 sword, 10 cavalry, 8 spear, 8 archer, 2 elephant (L5) | - |
+| 20 | 46:35 | 60 (solo 40) | 10 sword, 10 cavalry, 8 spear, 8 archer, 4 elephant (L5) | Julius Caesar and Ramses |
+
+Breather: 150 s between waves 1-5, 135 s to 10, 120 s to 15, 110 s to 20, +30 s after each
+boss wave. A full game is about 47 minutes. The final wave switches the sky to "hdri stormy
+weather".
+
+### Wave table, zombies
+
+Night sky ("hdri grassland night") from the start, "hdri desert night ocean" for the last horde.
+Sword and Spear Infantry only (melee), size x1.4 of classic, first horde at 3:00, breathers
+120/110/100/95 s (+30 s after boss hordes), about 39 minutes.
+
+| wave | time | units (2 humans) | composition (level) | boss |
+|---:|---:|---:|---|---|
+| 1 | 3:00 | 9 (solo 6) | 3 sword, 3 spear (L1) | - |
+| 5 | 11:00 | 21 (solo 14) | 8 sword, 6 spear (L2) | The Minotaur |
+| 10 | 20:50 | 39 (solo 26) | 14 sword, 12 spear (L3) | 2 x The Minotaur |
+| 15 | 29:50 | 60 (solo 40) | 22 sword, 18 spear (L4) | 3 x The Minotaur |
+| 20 | 38:20 | 84 (solo 56) | 31 sword, 25 spear (L5) | 4 x The Minotaur |
+
+(Full table: `--table`.) In-game texts are English and plain ASCII, because the Russian install
+renders cp1251 (no umlauts).
+
+## 3. Build, install, start
+
+```
+python tools/build_survival.py "D:\Games\Rise and Fall" work\overlay-survival [--table]
+python tools/check_survival.py "D:\Games\Rise and Fall" work\overlay-survival
+```
+
+Writes `Data\scenarios\(4) survival.scn`, `Data\scenarios\(4) survival zombies.scn` and the two
+matching `Data\map scripts\*.rmv`. Install = copy `work\overlay-survival\Data` over the working
+install's `Data` (new files only, nothing is overwritten). Both players need identical files.
+Flags: `--theme classic|zombie|all`, `--template "(4) plains"`, experimental `--boss-buffs`,
+`--zombie-buffs` (both off by default until their probe passes); `--no-diplomacy` drops the start
+diplomacy; `--unitset-base 134` (fallback, probe 4); `--test-schedule` (live testing only).
+
+Lobby: in-game testing showed that the skirmish and LAN lobbies
+only offer scenario maps from a .scn list, so both modes live where players already pick maps.
+Map "(4) Survival" / "(4) Survival Zombies", humans in two slots on one team, exactly one
+Computer player on another team, standard victory settings. Solo: skirmish with you plus one
+computer. More computers = each gets every wave (harder, untested). The `.rmv` entry mirrors
+the shipped maps (each scenario map has one); whether the list needs it is not known.
+
+## 4. What a zombie theme needs and what is still missing
+
+Built so far (in the zombie map): night environment, melee-only roster, more units, faster
+pacing, Minotaur bosses, own texts, separate lobby entry for a Halloween release.
+
+| need | how / status |
+|---|---|
+| slow, tanky zombies | `--zombie-buffs`: at 2 s one template unit of each zombie type is created for the computer, `ChangeUnitClassAttribute` hit points +100 % and speed -40 % is applied to its class, then the template is removed. **Unverified** that a class attribute change sticks to units created later; if it does not, the alternative is a per-wave `ChangeUnitAttribute` or a data overlay of dbobjects (global, would need its own records). |
+| melee only, many | done (Sword/Spear Infantry L1-L5 of `PERSIAN`; any civ works, Persian keeps one look) |
+| night / fog | `.env` files: `hdri grassland night`, `hdri desert night`, `hdri desert night ocean` (fog values live inside the .env). Also available: SetTime / SetDayNightCycle effects and the calamity "Q NightFall(1 shot)". |
+| killed units "turn" | no trigger reacts to a single death. Candidates: the calamity **"A-Raise Dead"** (dbcalamity record 5, unit set "A-All Units Affected By Raise Dead") via StartCalamity on the battlefield after each wave; or a looping trigger that re-creates N zombies near the human town per X human losses (PlayerHasResource on the "units lost" counters the campaigns use via `/#PA` tokens). Both need RE of the calamity fields and an in-game test. |
+| zombie look | missing: tinted/rotting textures (HD texture pipeline could produce a green/grey variant as new .sst + .udf), groans/footstep sounds (new .sdf/.wav), no new unit records yet |
+| boss | Minotaur gladiator (RTS mode record). A bespoke zombie boss would need its own model/texture. |
+
+## 5. Not verified (in-game tests)
+
+Run each with the overlay installed in the working install. "Expect" is the pass reading; the
+failure line says what it means.
+
+1. **Map appears.** Open the skirmish lobby, map list. Expect "(4) Survival" and
+   "(4) Survival Zombies" (name may show as the file name). Failure: not listed → the list is
+   not a folder scan or needs a `StringTableID`; try copying our .scn/.rmv over `(4) plains`
+   in a scratch install (same slot, our content).
+2. **Map loads.** Start solo + 1 computer (Easy). Expect the Plains terrain, intro text after
+   1 s, countdown "Wave 1 in : 3:58". Failure: crash/error 0x1bf1 at load → header or trigger
+   chunk rejected (check with `python tools/raf_scn.py dump` on the overlay file).
+3. **Computer neutralised.** At 0:10 look at the computer's start (reveal map or follow its
+   colour). Expect: town centre only, no citizens, TC takes no damage. Failure: citizens remain
+   → RemoveUnit/unit set wrong; AI keeps building → AIToggleSetting 0 is not "AI off".
+4. **Wave 1 at 4:00.** Expect message "Wave 1 of 20 is coming!", warning bell, 4 Persian L1
+   infantry appear next to the computer's town centre and walk to your town centre.
+   Failure: no units → Create with player 4 or near-object placement fails (the spawn objects
+   are placed "near" the selection "SV Enemy town centres", which uses a unit set); units
+   stand → TaskToObject or the unit-set selection fails. For both, rebuild once with
+   `--unitset-base 134` (the other candidate offset, scenario-format.md 3.5) and repeat.
+5. **Countdown chain.** After wave 1 the counter reads "Wave 2 in : 2:29". Pass if it counts
+   down to the next wave.
+6. **Co-op bonus.** With 2 humans (LAN), wave 1 brings 6 units (4 + 2). Solo brings 4.
+7. **Boss wave 5 (14:00).** Expect Sargon (enemy colour) plus message and horn; he uses powers.
+   With `--boss-buffs` his HP bar is 1.5x a normal Sargon.
+8. **Idle re-attack.** Stand still away from the path; enemies that stopped resume within ~10 s.
+9. **Lose.** Delete your town centre (or let it fall). Expect "The town has fallen." and
+   defeat 3 s later. Failure: no defeat → the human TC selection never empties (unit set).
+10. **Win (fast).** Build with `--test-schedule` into a scratch overlay (wave 1 at 0:30, 20 s
+    apart, quarter size, bosses at 1:50/3:35/5:20/7:05, last wave 7:05). Kill everything;
+    expect "Victory! The town stands." and the victory screen ~10-15 s after the last enemy dies,
+    about 7-8 minutes in. Failure: no victory with no enemies visible → an enemy unit survives
+    somewhere (check the computer's TC area) or the army/hero selections never empty. Do not
+    ship a `--test-schedule` build (its lobby help text starts with "TEST SCHEDULE BUILD").
+11. **Zombie map.** Night sky at 0:01; hordes melee only; with `--zombie-buffs` a zombie
+    swordsman L1 has 2x the HP of a normal one and walks visibly slower.
+12. **MP sync.** Two PCs, 20+ minutes, no out-of-sync message.
+
+## 6. Limits of the design
+
+* Waves are on a fixed clock, not "next wave when cleared": unkilled enemies stack up.
+* The enemy spawns only at the computer's town centre; on Plains that is one corner, so the
+  attack direction depends on the lobby start positions.
+* Pop cap of the computer is not raised; if creation hits a cap, waves shrink (probe 4/7).
+* Two or more computers multiply every wave (each gets a copy).
+* Texts are English; the lobby name/help comes from the .rmv `DisplayHelp` (unverified).
+
+## 7. Files
+
+`tools/raf_scn.py` (format), `tools/build_survival.py` (generator, themes), `tools/check_survival.py`
+(all offline checks + stub engine + negative tests), `docs/scenario-format.md`, this file.
+The overlay (`work/overlay-survival`) is generated and not committed.
