@@ -22,6 +22,8 @@ import shutil
 import subprocess
 import sys
 
+from raf_proc import NO_WINDOW
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SHADERS = os.path.join(REPO, "shaders")
 GROUPS_ORDER = ["common", "units", "terrain", "water"]
@@ -186,8 +188,10 @@ def apply_edits(txt, edits, rel):
 
 def git_rev():
     try:
-        rev = subprocess.check_output(["git", "-C", REPO, "rev-parse", "--short", "HEAD"], text=True).strip()
-        dirty = subprocess.call(["git", "-C", REPO, "diff", "--quiet", "--", "shaders", "tools/build_shaders.py"])
+        rev = subprocess.check_output(["git", "-C", REPO, "rev-parse", "--short", "HEAD"], text=True,
+                                      creationflags=NO_WINDOW).strip()
+        dirty = subprocess.call(["git", "-C", REPO, "diff", "--quiet", "--", "shaders", "tools/build_shaders.py"],
+                                creationflags=NO_WINDOW)
         return rev + ("-dirty" if dirty else "")
     except Exception:  # noqa: BLE001
         return "unknown"

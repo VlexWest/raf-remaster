@@ -22,6 +22,7 @@ import time
 import traceback
 from pathlib import Path
 
+import raf_proc
 import raf_update as ru
 from raf_installer_text import T, detect_lang, set_lang
 
@@ -92,7 +93,7 @@ def start_game(game: Path, tail: str, override: dict) -> None:
         with open(override["dry_run_game"], "a", encoding="utf-8") as f:
             f.write(cmd + "\n")
         return
-    subprocess.Popen(cmd, cwd=str(game), close_fds=True)
+    subprocess.Popen(cmd, cwd=str(game), close_fds=True, creationflags=raf_proc.NO_WINDOW)
 
 
 def setup_command(setup: Path, game: Path, tail: str, lang: str, headless_log=None) -> list:
@@ -106,11 +107,10 @@ def setup_command(setup: Path, game: Path, tail: str, lang: str, headless_log=No
 # ---------------------------------------------------------------- dialogs (tkinter, only when needed)
 
 
-def _tk_root():
-    import tkinter as tk
+def _tk_root(title=None):
+    import raf_ui as ui
 
-    root = tk.Tk()
-    root.title(T("upd_title", app=APP))
+    root = ui.window(title or T("upd_title", app=APP))
     root.attributes("-topmost", True)
     root.resizable(False, False)
     return root
@@ -121,37 +121,44 @@ def ask_update(release: dict, installed: str, fp: str) -> str:
     import tkinter as tk
     from tkinter import ttk
 
+    import raf_ui as ui
+
     root = _tk_root()
     answer = {"v": "later"}
-    frm = ttk.Frame(root, padding=14)
-    frm.pack(fill="both", expand=True)
     new = ru.norm(release["tag"])
-    ttk.Label(frm, text=T("upd_available", new=new, cur=installed), font=("Segoe UI", 12, "bold"),
-              wraplength=520, justify="left").pack(anchor="w")
+    ui.header(root, APP, T("upd_head"))
+    frm = ttk.Frame(root, padding=(24, 16, 24, 20))
+    frm.pack(fill="both", expand=True)
+    ttk.Label(frm, text=T("upd_available", new=new, cur=installed), font=(ui.FONT, 12, "bold"),
+              wraplength=540, justify="left").pack(anchor="w")
     text = ru.excerpt(release.get("body", ""))
     if text:
-        ttk.Label(frm, text=T("upd_changes")).pack(anchor="w", pady=(10, 2))
-        box = tk.Text(frm, width=70, height=min(14, max(4, text.count("\n") + 2)), wrap="word",
-                      font=("Segoe UI", 9), relief="flat", background=root.cget("background"))
+        ttk.Label(frm, text=T("upd_changes").rstrip(":").upper(), style="Section.TLabel").pack(anchor="w",
+                                                                                         pady=(14, 4))
+        box = tk.Text(frm, width=66, height=min(14, max(4, text.count("\n") + 2)), wrap="word",
+                      font=(ui.FONT, 10), relief="flat", background=ui.CARD, foreground=ui.TEXT, borderwidth=0,
+                      highlightthickness=0, padx=12, pady=8)
         box.insert("1.0", text)
         box.configure(state="disabled")
         box.pack(anchor="w", fill="x")
-    ttk.Label(frm, text=T("upd_mp", cur=installed, fp=fp), wraplength=520, justify="left",
-              foreground="#555").pack(anchor="w", pady=(10, 0))
+    ttk.Label(frm, text=T("upd_mp", cur=installed, fp=fp), wraplength=540, justify="left",
+              style="Muted.TLabel").pack(anchor="w", pady=(12, 0))
     btns = ttk.Frame(frm)
-    btns.pack(fill="x", pady=(12, 0))
+    btns.pack(fill="x", pady=(18, 0))
 
     def pick(v):
         answer["v"] = v
         root.destroy()
 
-    b = ttk.Button(btns, text=T("btn_update"), command=lambda: pick("update"))
-    b.pack(side="left")
-    ttk.Button(btns, text=T("btn_later"), command=lambda: pick("later")).pack(side="left", padx=6)
-    ttk.Button(btns, text=T("btn_skip"), command=lambda: pick("skip")).pack(side="right")
+    ttk.Button(btns, text=T("btn_skip"), style="Link.TButton", command=lambda: pick("skip")).pack(side="left")
+    ttk.Button(btns, text=T("btn_later"), command=lambda: pick("later")).pack(side="right")
+    b = ttk.Button(btns, text=T("btn_update"), style="Accent.TButton", command=lambda: pick("update"))
+    b.pack(side="right", padx=(0, 10))
     root.protocol("WM_DELETE_WINDOW", lambda: pick("later"))
     b.focus_set()
     root.after(200, lambda: root.attributes("-topmost", False))
+    ui.center(root)
+    ui.ready(root, "launcher-offer", pick=pick)
     root.mainloop()
     return answer["v"]
 
@@ -161,14 +168,17 @@ def download_with_window(release: dict, folder: Path, test: bool):
     import tkinter as tk
     from tkinter import ttk
 
+    import raf_ui as ui
+
     root = _tk_root()
     st = {"done": 0, "total": 1, "result": None, "error": None, "cancel": False, "finished": False}
-    frm = ttk.Frame(root, padding=14)
+    ui.header(root, APP, T("upd_dl_head") + f" · {ru.norm(release['tag'])}")
+    frm = ttk.Frame(root, padding=(24, 16, 24, 20))
     frm.pack(fill="both", expand=True)
     label = tk.StringVar(value=T("upd_download", done=0, total=0))
     ttk.Label(frm, textvariable=label, width=60).pack(anchor="w")
-    bar = ttk.Progressbar(frm, maximum=1000, length=420)
-    bar.pack(fill="x", pady=8)
+    bar = ttk.Progressbar(frm, maximum=1000, length=480)
+    bar.pack(fill="x", pady=(8, 14))
     ttk.Button(frm, text=T("btn_cancel"), command=lambda: st.update(cancel=True)).pack(anchor="e")
     root.protocol("WM_DELETE_WINDOW", lambda: st.update(cancel=True))
 
@@ -190,7 +200,11 @@ def download_with_window(release: dict, folder: Path, test: bool):
         else:
             root.after(100, poll)
 
-    threading.Thread(target=work, daemon=True).start()
+    ui.center(root)
+    if ui.DEMO_HOOK:  # offline screenshots: no download
+        ui.ready(root, "launcher-download", st=st)
+    else:
+        threading.Thread(target=work, daemon=True).start()
     poll()
     root.mainloop()
     return st["result"], st["error"]
@@ -259,7 +273,7 @@ def run(argv, tail: str) -> int:
             hl = Path(override["dry_run_game"]).with_suffix(".setup.log") if override.get("dry_run_game") else None
             cmd = setup_command(setup, game, tail, info.get("lang") or detect_lang(), hl)
             log("starting " + subprocess.list2cmdline(cmd))
-            subprocess.Popen(cmd, cwd=str(folder), close_fds=True)
+            subprocess.Popen(cmd, cwd=str(folder), close_fds=True, creationflags=raf_proc.NO_WINDOW)
             return 0  # the setup waits for this process, updates, then starts the game
         log(f"download failed: {err}")
         if err != "cancelled":
@@ -271,6 +285,7 @@ def run(argv, tail: str) -> int:
 
 
 def main() -> int:
+    raf_proc.install()  # windowed exe: no console window for any child
     argv = sys.argv[1:]
     tail = raw_args() if getattr(sys, "frozen", False) else subprocess.list2cmdline(argv)
     try:

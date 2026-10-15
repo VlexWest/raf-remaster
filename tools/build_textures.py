@@ -13,6 +13,8 @@ import hashlib, json, os, re, struct, subprocess, sys, tempfile, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
+from raf_proc import NO_WINDOW  # no console window per texconv/ESRGAN call from the windowed setup
+
 TAG = "may2026"
 TEXCONV_SHA256 = "dcfdec10244e02cf5037fba089c55fb7e1326b1c8181742d77d15fa5cb5eef06"
 URL = f"https://github.com/microsoft/DirectXTex/releases/download/{TAG}/texconv.exe"
@@ -129,7 +131,7 @@ def process(rel, hd, src, tmp):
         struct.pack_into("<I", h0, 28, 1)
         open(inp, "wb").write(bytes(h0) + b"".join(body[i * sum(old):i * sum(old) + old[0]] for i in range(f)))
         r = subprocess.run([TEXCONV, "-nologo", "-y", "-m", "0", "-sepalpha", "-f", hd["fmt"], "-dx9", "-o", outd, inp],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, creationflags=NO_WINDOW)
         gb = open(os.path.join(outd, os.path.basename(rel)), "rb").read()
         gh = header(gb)
         if gh is None or gh["fmt"] != hd["fmt"] or gh["mips"] != n_new or (gh["w"], gh["h"]) != (w, h):
@@ -390,7 +392,7 @@ def hd_prepare(item, tmp):
     w, h = hd["w"], hd["h"]
     open(f, "wb").write(bytes(h0) + src[hd["off"]:hd["off"] + levels(w, h, 1, hd["fmt"], 0)[0]])
     r = subprocess.run([TEXCONV, "-nologo", "-y", "-ft", "png", "-f", "R8G8B8A8_UNORM", "-o", d, f],
-                       capture_output=True, text=True, creationflags=BELOW_NORMAL)
+                       capture_output=True, text=True, creationflags=BELOW_NORMAL | NO_WINDOW)
     im = np.asarray(Image.open(os.path.join(d, f"{idx}.png")).convert("RGBA"))
     if im.shape[:2] != (h, w):
         raise ValueError("decode size mismatch " + r.stdout[-150:])
@@ -436,7 +438,7 @@ def hd_finish(item, rgb, a, tmp):
     if bump:
         cmd += ["-bc", "u"]            # uniform weighting; perceptual weights are wrong for vectors
     r = subprocess.run(cmd + ["-o", odir, os.path.join(pdir, f"{idx}.png")], capture_output=True, text=True,
-                       creationflags=BELOW_NORMAL)
+                       creationflags=BELOW_NORMAL | NO_WINDOW)
     p = os.path.join(odir, f"{idx}.dds")
     if not os.path.exists(p):
         raise ValueError("texconv failed " + r.stdout[-200:] + r.stderr[-200:])
@@ -527,7 +529,7 @@ def hd_main(a):
         print("prepared, running ESRGAN", flush=True)
         r = subprocess.run([ESRGAN_EXE, "-i", os.path.join(tmp, "in"), "-o", os.path.join(tmp, "out"), "-n", ESRGAN_MODEL,
                             "-s", "4", "-f", "png", "-m", os.path.join(ESRGAN_DIR, "bin", "models")],
-                           capture_output=True, text=True, creationflags=BELOW_NORMAL)
+                           capture_output=True, text=True, creationflags=BELOW_NORMAL | NO_WINDOW)
         if r.returncode:
             sys.exit("esrgan failed: " + r.stderr[-300:])
     print("upscaled, encoding", flush=True)
@@ -587,7 +589,7 @@ def hd_sheet(overlay, outpng, game=r"D:\Games\Rise and Fall"):
             d = os.path.join(tmp, str(k))
             os.makedirs(d, exist_ok=True)
             subprocess.run([TEXCONV, "-nologo", "-y", "-ft", "png", "-f", "R8G8B8A8_UNORM", "-m", "1", "-o", d, p],
-                           capture_output=True)
+                           capture_output=True, creationflags=NO_WINDOW)
             im = Image.open(os.path.join(d, os.path.splitext(os.path.basename(p))[0] + ".png")).convert("RGB")
             s = im.width // e["w"]
             c = 128 * s

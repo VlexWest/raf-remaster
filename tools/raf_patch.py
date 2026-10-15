@@ -51,6 +51,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # raf_version and the other tools
 
+from raf_proc import NO_WINDOW  # noqa: E402 - no console windows from the windowed setup
 from raf_version import VERSION as REMASTER_VERSION  # noqa: E402
 EXE = "RiseAndFall.exe"
 STATE_DIR = ".raf-remaster"
@@ -480,7 +481,7 @@ class Overlay:
             sys.exit(f"{self.name}: overlay {self.root} is missing; it is built by its own tool (see docs)")
         cmd = [str(c) for c in self.build_cmd(stock)]
         print(f"{self.name}: building: {' '.join(cmd)}")
-        subprocess.run(cmd, cwd=REPO, check=True)
+        subprocess.run(cmd, cwd=REPO, check=True, creationflags=NO_WINDOW)
 
     def files(self) -> dict:
         """{rel install path: source path}"""
@@ -761,7 +762,8 @@ def fingerprint(game: Path) -> str:
 def check_game_dir(game: Path) -> None:
     if not (game / EXE).is_file():
         sys.exit(f"{EXE} not found in {game}")
-    out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {EXE}", "/NH"], capture_output=True, text=True).stdout
+    out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {EXE}", "/NH"], capture_output=True, text=True,
+                         creationflags=NO_WINDOW).stdout
     if EXE.lower() in out.lower():
         sys.exit(f"{EXE} is running; close the game first")
 

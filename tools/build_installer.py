@@ -42,8 +42,10 @@ NAME = "RaF-Remaster-Setup"
 LAUNCHER_NAME = "RaF Remaster"
 LAUNCHER_CONTENTS = ".raf-launcher"
 LAUNCHER_DIST = WORK / "launcher-dist"
+UI = WORK / "ui"  # emblem + checkbox images, drawn by tools/make_icon.py at every build
 
 sys.path.insert(0, str(TOOLS))
+import make_icon  # noqa: E402
 import raf_patch as rp  # noqa: E402
 
 # The release set = the patcher defaults plus zoom-setting; the installer selftest proves the
@@ -197,6 +199,7 @@ def make_bundle(stock: Path):
     shutil.copy2(REPO / "LICENSE", lic / "RaF-Remaster-Apache-2.0.txt")
     shutil.copy2(REPO / "NOTICE", lic / "NOTICE.txt")
     shutil.copy2(REPO / "NOTICE", BUNDLE / "NOTICE")  # -> REMASTER-NOTICE.txt in the game folder
+    shutil.copy2(UI / "raf.ico", BUNDLE / "raf.ico")  # -> .raf-remaster/raf.ico: shortcuts, uninstall entry
     (lic / "Microsoft-vcomp140.txt").write_text(
         "vcomp140.dll (OpenMP runtime used by realesrgan-ncnn-vulkan) is part of the Microsoft Visual C++\n"
         "Redistributable and is shipped unchanged as in the upstream Real-ESRGAN ncnn Vulkan release\n"
@@ -223,7 +226,7 @@ def build_launcher():
            "--contents-directory", LAUNCHER_CONTENTS, "--distpath", str(LAUNCHER_DIST),
            "--workpath", str(WORK / "pyi-launcher"), "--specpath", str(WORK), "--paths", str(TOOLS),
            "--exclude-module", "numpy", "--exclude-module", "PIL", "--exclude-module", "pefile",
-           str(TOOLS / "raf_launcher.py")]
+           "--icon", str(UI / "raf.ico"), "--add-data", f"{UI}{os.pathsep}ui", str(TOOLS / "raf_launcher.py")]
     subprocess.run(cmd, check=True, cwd=REPO)
     src = LAUNCHER_DIST / LAUNCHER_NAME
     dst = BUNDLE / "launcher"
@@ -231,6 +234,23 @@ def build_launcher():
     shutil.copytree(src, dst)
     size = sum(f.stat().st_size for f in dst.rglob("*") if f.is_file())
     print(f"launcher: {dst / (LAUNCHER_NAME + '.exe')}, {sum(1 for _ in dst.rglob('*'))} entries, {size / 1e6:.1f} MB")
+
+
+def pe_subsystem(exe: Path) -> int:
+    """2 = Windows GUI (no console window), 3 = console."""
+    b = exe.read_bytes()[:4096]
+    pe = int.from_bytes(b[0x3C:0x40], "little")
+    if b[pe:pe + 4] != b"PE\0\0":
+        raise ValueError(f"{exe}: not a PE file")
+    return int.from_bytes(b[pe + 0x5C:pe + 0x5E], "little")
+
+
+def check_windowed(*exes: Path) -> None:
+    for exe in exes:
+        sub = pe_subsystem(exe)
+        if sub != 2:
+            sys.exit(f"{exe}: PE subsystem {sub}, expected 2 (windowed); a console exe opens a console window")
+        print(f"windowed: {exe.name} (PE subsystem 2)")
 
 
 def write_hash(exe: Path) -> str:
@@ -245,7 +265,8 @@ def pyinstaller(external):
         hidden += ["--hidden-import", n]
     cmd = [str(VPY), "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--windowed", "--name", NAME,
            "--distpath", str(DIST), "--workpath", str(WORK / "pyi"), "--specpath", str(WORK),
-           "--add-data", f"{BUNDLE}{os.pathsep}bundle", "--exclude-module", "capstone", "--exclude-module", "unicorn",
+           "--add-data", f"{BUNDLE}{os.pathsep}bundle", "--add-data", f"{UI}{os.pathsep}ui",
+           "--icon", str(UI / "raf.ico"), "--exclude-module", "capstone", "--exclude-module", "unicorn",
            "--exclude-module", "matplotlib", "--exclude-module", "scipy",
            *hidden, str(TOOLS / "raf_installer.py")]
     subprocess.run(cmd, check=True, cwd=REPO)
@@ -356,11 +377,14 @@ def main():
     exe = DIST / f"{NAME}.exe"
     if "--scan-only" not in args:
         ensure_venv()
+        shutil.rmtree(UI, ignore_errors=True)
+        make_icon.write_all(UI)
         external = make_bundle(stock)
         if "--skip-exe" in args:
             return
         build_launcher()
         pyinstaller(external)
+        check_windowed(exe, BUNDLE / "launcher" / f"{LAUNCHER_NAME}.exe")
         print(f"built {exe} ({exe.stat().st_size / 1e6:.1f} MB), sha256 {write_hash(exe)[:12]} "
               f"(+ {exe.name}.sha256), version {rp.REMASTER_VERSION}")
     if not scan(exe, stock):

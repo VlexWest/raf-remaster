@@ -54,6 +54,7 @@ import time
 import traceback
 from pathlib import Path
 
+import raf_proc
 import raf_update as ru
 from raf_installer_text import LANGS, T, detect_lang, get_lang, set_lang
 from raf_version import VERSION
@@ -64,13 +65,14 @@ UNINSTALL_ID = "RaF-Remaster"
 UNINSTALL_BAT = "Uninstall.bat"
 LAUNCHER_EXE = ru.LAUNCHER_EXE  # bundle/launcher/: RaF Remaster.exe + .raf-launcher/ (tools/raf_launcher.py)
 NOTICE_NAME = "REMASTER-NOTICE.txt"
+ICON_NAME = "raf.ico"  # bundle/raf.ico (tools/make_icon.py) -> <game>/.raf-remaster/raf.ico
 REG_GAME = r"Software\Midway Home Entertainment\Rise and Fall"
 REG_UNINSTALL = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
 TEST_ROOT_KEY = r"Software\RaF-Remaster-Installer-Test"
 HD_FEATURES = ("hd-terrain", "hd-units")
 DXVK_FILES = ("d3d9.dll", "dxvk.conf")
 COPY_SKIP = {"unins000.exe", "unins000.dat", ".raf-remaster"}  # never copy the original's uninstaller
-CREATE_NO_WINDOW = 0x08000000
+CREATE_NO_WINDOW = raf_proc.NO_WINDOW
 POWERSHELL = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "WindowsPowerShell", "v1.0",
                           "powershell.exe")
 
@@ -96,18 +98,6 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: f.read(1 << 20), b""):
             h.update(block)
     return h.hexdigest()
-
-
-def no_console_windows() -> None:
-    """Builders start texconv / realesrgan; in a windowed exe every child would flash a console."""
-    orig = subprocess.Popen.__init__
-
-    def init(self, *a, **k):
-        if os.name == "nt" and not k.get("creationflags"):
-            k["creationflags"] = CREATE_NO_WINDOW
-        orig(self, *a, **k)
-
-    subprocess.Popen.__init__ = init
 
 
 def feature_label(name: str) -> str:
@@ -565,6 +555,8 @@ class Installer:
                 "test_root": str(self.test_root) if self.test_root else None,
                 "fingerprint": self.result.get("fingerprint"), "installed": time.strftime("%Y-%m-%d %H:%M:%S")}
         (self.dst / ".raf-remaster").mkdir(parents=True, exist_ok=True)
+        if (self.bundle / ICON_NAME).is_file():  # emblem for shortcuts + the uninstall entry
+            shutil.copy2(self.bundle / ICON_NAME, self.dst / ".raf-remaster" / ICON_NAME)
         (self.dst / ".raf-remaster" / ru.INSTALL_FILE).write_text(json.dumps(info, indent=1, ensure_ascii=False),
                                                                   encoding="utf-8")
 
@@ -581,16 +573,18 @@ class Installer:
             target, args = self.dst / LAUNCHER_EXE, ""
         else:
             target = exe
+        ico = self.dst / ".raf-remaster" / ICON_NAME
+        icon = ico if ico.is_file() else target  # our emblem; older bundles: the launcher's or the game's
         links = []
         if self.desktop:
-            links.append((desk / f"{APP}.lnk", target, args, exe))
+            links.append((desk / f"{APP}.lnk", target, args, icon))
         if self.startmenu:
             links += [
-                (menu / f"{APP}.lnk", target, args, exe),
-                (menu / f"{T('lnk_host')}.lnk", self.dst / "Host.bat", "", exe),
-                (menu / f"{T('lnk_join')}.lnk", self.dst / "Join.bat", "", exe),
+                (menu / f"{APP}.lnk", target, args, icon),
+                (menu / f"{T('lnk_host')}.lnk", self.dst / "Host.bat", "", icon),
+                (menu / f"{T('lnk_join')}.lnk", self.dst / "Join.bat", "", icon),
                 (menu / f"{T('lnk_fp')}.lnk", self.dst / "REMASTER.txt", "", None),
-                (menu / f"{T('lnk_uninst', app=APP)}.lnk", self.dst / UNINSTALL_BAT, "", None),
+                (menu / f"{T('lnk_uninst', app=APP)}.lnk", self.dst / UNINSTALL_BAT, "", icon),
             ]
         if links:
             make_shortcuts(links, self.dst)
@@ -604,7 +598,7 @@ class Installer:
         _reg_write_uninstall(self.reg_uninstall + "\\" + UNINSTALL_ID, {
             "DisplayName": APP, "DisplayVersion": self.cfg.get("remaster_version", VERSION),
             "Publisher": "Alexander West (thewest.cc/raf)", "InstallLocation": str(self.dst),
-            "UninstallString": f'"{self.dst / UNINSTALL_BAT}"', "DisplayIcon": str(exe),
+            "UninstallString": f'"{self.dst / UNINSTALL_BAT}"', "DisplayIcon": str(icon),
             "NoModify": 1, "NoRepair": 1, "EstimatedSize": min(size_kb, 0x7FFFFFFF)})
         self.result["uninstall"] = str(self.dst / UNINSTALL_BAT)
 
@@ -906,7 +900,8 @@ def start_installed(dst: Path, tail: str = "") -> None:
         cmd = f'"{dst / LAUNCHER_EXE}" --skip-check'
     else:
         cmd = f'"{dst / EXE}" -datapath "Data\\" -redistpath "Redist\\"'
-    subprocess.Popen(cmd + (f" {tail}" if tail else ""), cwd=str(dst), close_fds=True)
+    subprocess.Popen(cmd + (f" {tail}" if tail else ""), cwd=str(dst), close_fds=True,
+                     creationflags=CREATE_NO_WINDOW)
 
 
 def _install_dir_from_bat(bat: Path):
@@ -1091,30 +1086,44 @@ def update_main(argv) -> int:
     return update_gui(game, bundle, cfg, relaunch, launch="--no-launch" not in opts)
 
 
+def _progress(bar, frac):
+    """Indeterminate bar for frac None, else a determinate value 0..1."""
+    if frac is None:
+        if str(bar.cget("mode")) != "indeterminate":
+            bar.configure(mode="indeterminate")
+            bar.start(15)
+    else:
+        if str(bar.cget("mode")) != "determinate":
+            bar.stop()
+            bar.configure(mode="determinate")
+        bar.configure(value=int(frac * 1000))
+
+
 def update_gui(game, bundle, cfg, relaunch, launch=True) -> int:
     """Progress window for the update; questions are asked on the Tk thread."""
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
+    import raf_ui as ui
+
     q = queue.Queue()
-    sys.stdout = sys.stderr = QueueWriter(q, log_path())
-    try:
-        log_path().write_text("", encoding="utf-8")
-    except OSError:
-        pass
-    root = tk.Tk()
-    root.title(T("upd_setup_title", app=APP, ver=cfg.get("remaster_version")))
-    root.minsize(640, 360)
-    frm = ttk.Frame(root, padding=14)
+    if not ui.DEMO_HOOK:
+        sys.stdout = sys.stderr = QueueWriter(q, log_path())
+        try:
+            log_path().write_text("", encoding="utf-8")
+        except OSError:
+            pass
+    ver = cfg.get("remaster_version")
+    root = ui.window(T("upd_setup_title", app=APP, ver=ver), minsize=(640, 0))
+    ui.header(root, APP, f"{T('sub_update')} · {ver}")
+    frm = ttk.Frame(root, padding=(24, 18, 24, 20))
     frm.pack(fill="both", expand=True)
-    ttk.Label(frm, text=T("upd_setup_title", app=APP, ver=cfg.get("remaster_version")),
-              font=("Segoe UI", 13, "bold")).pack(anchor="w")
     step_var = tk.StringVar(value=T("step_check"))
-    ttk.Label(frm, textvariable=step_var).pack(anchor="w", pady=(8, 0))
+    ttk.Label(frm, textvariable=step_var, wraplength=590, justify="left").pack(anchor="w")
     bar = ttk.Progressbar(frm, mode="determinate", maximum=1000)
-    bar.pack(fill="x", pady=4)
-    box = tk.Text(frm, height=12, wrap="word", state="disabled", font=("Consolas", 9))
-    box.pack(fill="both", expand=True)
+    bar.pack(fill="x", pady=(8, 12))
+    details = ui.Details(frm, T("details_show"), T("details_hide"), height=12)
+    details.frame.pack(fill="both", expand=True)
     result = {"code": 1, "finished": False}
 
     class GuiUI:
@@ -1150,30 +1159,16 @@ def update_gui(game, bundle, cfg, relaunch, launch=True) -> int:
             GuiUI().error(T("upd_failed", msg=_msg(e), log=log_path()))
         q.put(("finished", None))
 
-    def add_log(line):
-        box.configure(state="normal")
-        box.insert("end", line + "\n")
-        box.see("end")
-        box.configure(state="disabled")
-
     def poll():
         try:
             while True:
                 kind, val = q.get_nowait()
                 if kind == "log":
-                    add_log(val)
+                    details.append(val)
                 elif kind == "step":
                     text, frac = val
                     step_var.set(text)
-                    if frac is None:
-                        if str(bar.cget("mode")) != "indeterminate":
-                            bar.configure(mode="indeterminate")
-                            bar.start(15)
-                    else:
-                        if str(bar.cget("mode")) != "determinate":
-                            bar.stop()
-                            bar.configure(mode="determinate")
-                        bar.configure(value=int(frac * 1000))
+                    _progress(bar, frac)
                 elif kind in ("retry", "dir", "error"):
                     msg, ev, ans = val
                     if kind == "retry":
@@ -1189,7 +1184,7 @@ def update_gui(game, bundle, cfg, relaunch, launch=True) -> int:
                     bar.stop()
                     bar.configure(mode="determinate", value=1000)
                     step_var.set(val)
-                    add_log(val)
+                    details.append(val)
                 elif kind == "finished":
                     root.after(2500 if result["code"] == 0 else 0, root.destroy)
                     return
@@ -1198,7 +1193,11 @@ def update_gui(game, bundle, cfg, relaunch, launch=True) -> int:
         root.after(100, poll)
 
     root.protocol("WM_DELETE_WINDOW", lambda: None)  # closing mid-update would leave a half-built folder
-    threading.Thread(target=work, daemon=True).start()
+    ui.center(root)
+    if ui.DEMO_HOOK:  # offline screenshots (tools/ui_shots.py): no update runs
+        ui.ready(root, "update", q=q, step=step_var, bar=bar, details=details)
+    else:
+        threading.Thread(target=work, daemon=True).start()
     poll()
     root.mainloop()
     return result["code"]
@@ -1207,84 +1206,104 @@ def update_gui(game, bundle, cfg, relaunch, launch=True) -> int:
 # ---------------------------------------------------------------- GUI
 
 
-def gui() -> None:
+def gui(cfg=None, bundle=None) -> None:
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
+    import raf_ui as ui
+
+    demo = ui.DEMO_HOOK is not None  # offline screenshots: no probe, no search, no install
     forced = sys.argv[sys.argv.index("--lang") + 1] if "--lang" in sys.argv[:-1] else None
     set_lang(forced or detect_lang())
-    bundle = bundle_dir()
-    cfg = load_config(bundle)
+    bundle = bundle or bundle_dir()
+    cfg = cfg or load_config(bundle)
     q = queue.Queue()
-    sys.stdout = sys.stderr = QueueWriter(q, log_path())
-    try:
-        log_path().write_text("", encoding="utf-8")
-    except OSError:
-        pass
+    if not demo:
+        sys.stdout = sys.stderr = QueueWriter(q, log_path())
+        try:
+            log_path().write_text("", encoding="utf-8")
+        except OSError:
+            pass
 
-    root = tk.Tk()
-    root.minsize(760, 600)
+    root = ui.window(T("title", app=APP, ver=cfg["remaster_version"]), minsize=(780, 0))
     src_var, dst_var = tk.StringVar(), tk.StringVar()
     hd_var, desk_var, menu_var = tk.BooleanVar(value=True), tk.BooleanVar(value=True), tk.BooleanVar(value=True)
     lang_var = tk.StringVar(value=LANGS[get_lang()])
-    st = {"src_ok": False, "src_size": None, "src_msg": None, "busy": False, "started": False, "gpu": None}
+    st = {"src_ok": False, "src_size": None, "src_msg": None, "busy": False, "started": False, "gpu": None,
+          "result": None, "log": []}
     w = {}  # widgets of the current form
+
+    def card(parent, title):
+        c = ttk.Frame(parent, style="Card.TFrame", padding=(16, 12, 16, 12))
+        c.pack(fill="x", pady=(0, 12))
+        c.columnconfigure(0, weight=1)
+        ttk.Label(c, text=title, style="CardSection.TLabel").grid(row=0, column=0, columnspan=2, sticky="w",
+                                                                   pady=(0, 6))
+        return c
+
+    def lang_picker(box):
+        ttk.Label(box, text=T("lang"), style="BandSmall.TLabel").pack(side="left", padx=(0, 6))
+        cb = ttk.Combobox(box, textvariable=lang_var, values=list(LANGS.values()), state="readonly", width=10)
+        cb.pack(side="left")
+        cb.bind("<<ComboboxSelected>>", lambda e: switch_lang())
+        w["lang_box"] = cb
 
     def build_form():
         for child in root.winfo_children():
             child.destroy()
         root.title(T("title", app=APP, ver=cfg["remaster_version"]))
-        frm = ttk.Frame(root, padding=14)
-        frm.pack(fill="both", expand=True)
-        frm.columnconfigure(1, weight=1)
-        top = ttk.Frame(frm)
-        top.grid(row=0, column=0, columnspan=3, sticky="we")
-        ttk.Label(top, text=f"{APP} {cfg['remaster_version']}", font=("Segoe UI", 15, "bold")).pack(side="left")
-        lang_box = ttk.Combobox(top, textvariable=lang_var, values=list(LANGS.values()), state="readonly", width=10)
-        lang_box.pack(side="right")
-        ttk.Label(top, text=T("lang")).pack(side="right", padx=4)
-        lang_box.bind("<<ComboboxSelected>>", lambda e: switch_lang())
-        w["lang_box"] = lang_box
-        ttk.Label(frm, wraplength=720, justify="left", text=T("intro", gv=cfg["game_version"])).grid(
-            row=1, column=0, columnspan=3, sticky="w", pady=(4, 10))
+        ui.header(root, APP, T("sub_setup", ver=cfg["remaster_version"]),
+                  right=None if st["started"] else lang_picker)
+        body = ttk.Frame(root, padding=(24, 16, 24, 0))
+        body.pack(fill="both", expand=True)
+        w["body"] = body
+        form = ttk.Frame(body)
+        form.pack(fill="x")
+        w["form"] = form
+        ttk.Label(form, wraplength=730, justify="left", style="Muted.TLabel",
+                  text=T("intro", gv=cfg["game_version"])).pack(anchor="w", pady=(0, 14))
 
-        ttk.Label(frm, text=T("lbl_src")).grid(row=2, column=0, sticky="w")
-        ttk.Entry(frm, textvariable=src_var).grid(row=2, column=1, sticky="we", padx=6)
-        ttk.Button(frm, text=T("browse"), command=lambda: browse(True)).grid(row=2, column=2)
-        w["src_status"] = ttk.Label(frm, wraplength=600, justify="left")
-        w["src_status"].grid(row=3, column=1, columnspan=2, sticky="w", pady=(2, 8))
+        c = card(form, T("sec_src"))
+        ttk.Entry(c, textvariable=src_var).grid(row=1, column=0, sticky="we", padx=(0, 8))
+        ttk.Button(c, text=T("browse"), command=lambda: browse(True)).grid(row=1, column=1)
+        w["src_status"] = ttk.Label(c, wraplength=700, justify="left", style="CardMuted.TLabel")
+        w["src_status"].grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
-        ttk.Label(frm, text=T("lbl_dst")).grid(row=4, column=0, sticky="w")
-        ttk.Entry(frm, textvariable=dst_var).grid(row=4, column=1, sticky="we", padx=6)
-        ttk.Button(frm, text=T("browse"), command=lambda: browse(False)).grid(row=4, column=2)
-        w["space"] = ttk.Label(frm)
-        w["space"].grid(row=5, column=1, columnspan=2, sticky="w", pady=(2, 8))
+        c = card(form, T("sec_dst"))
+        ttk.Entry(c, textvariable=dst_var).grid(row=1, column=0, sticky="we", padx=(0, 8))
+        ttk.Button(c, text=T("browse"), command=lambda: browse(False)).grid(row=1, column=1)
+        w["space"] = ttk.Label(c, style="CardMuted.TLabel")
+        w["space"].grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
-        opts = ttk.Frame(frm)
-        opts.grid(row=6, column=0, columnspan=3, sticky="w")
-        w["hd"] = ttk.Checkbutton(opts, variable=hd_var, command=update_space, text=T("opt_hd"))
-        w["hd"].pack(anchor="w")
-        ttk.Checkbutton(opts, variable=desk_var, text=T("opt_desktop")).pack(anchor="w")
-        ttk.Checkbutton(opts, variable=menu_var, text=T("opt_menu")).pack(anchor="w")
-        w["gpu"] = ttk.Label(frm, wraplength=720, justify="left")
-        w["gpu"].grid(row=7, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        c = card(form, T("sec_opts"))
+        w["hd"] = ttk.Checkbutton(c, variable=hd_var, command=update_space, text=T("opt_hd"),
+                                  style="Card.TCheckbutton")
+        w["hd"].grid(row=1, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(c, variable=desk_var, text=T("opt_desktop"), style="Card.TCheckbutton").grid(
+            row=2, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(c, variable=menu_var, text=T("opt_menu"), style="Card.TCheckbutton").grid(
+            row=3, column=0, columnspan=2, sticky="w")
+        w["gpu"] = ttk.Label(c, wraplength=700, justify="left", style="CardMuted.TLabel")
+        w["gpu"].grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
-        btns = ttk.Frame(frm)
-        btns.grid(row=8, column=0, columnspan=3, sticky="we", pady=10)
-        w["install"] = ttk.Button(btns, text=T("btn_install"), command=start)
-        w["install"].pack(side="left")
+        w["done"] = ttk.Frame(body)  # filled by finished()
+
+        foot = ttk.Frame(root, padding=(24, 4, 24, 20))
+        foot.pack(fill="x", side="bottom")
+        w["step"] = tk.StringVar(value=T("ready"))
+        ttk.Label(foot, textvariable=w["step"], wraplength=730, justify="left").pack(anchor="w")
+        w["bar"] = ttk.Progressbar(foot, mode="determinate", maximum=1000)
+        w["bar"].pack(fill="x", pady=(6, 8))
+        w["details"] = ui.Details(foot, T("details_show"), T("details_hide"), height=9)
+        w["details"].frame.pack(fill="x")
+        for line in st["log"]:
+            w["details"].append(line)
+        btns = ttk.Frame(foot)
+        btns.pack(fill="x", pady=(14, 0))
         w["close"] = ttk.Button(btns, text=T("btn_close"), command=root.destroy)
         w["close"].pack(side="right")
-
-        w["step"] = tk.StringVar(value=T("ready"))
-        ttk.Label(frm, textvariable=w["step"]).grid(row=9, column=0, columnspan=3, sticky="w")
-        w["bar"] = ttk.Progressbar(frm, mode="determinate", maximum=1000)
-        w["bar"].grid(row=10, column=0, columnspan=3, sticky="we", pady=4)
-        w["log"] = tk.Text(frm, height=9, wrap="word", state="disabled", font=("Consolas", 9))
-        w["log"].grid(row=11, column=0, columnspan=3, sticky="nsew")
-        frm.rowconfigure(11, weight=1)
-        w["fp"] = ttk.Frame(frm)
-        w["fp"].grid(row=12, column=0, columnspan=3, sticky="we", pady=(8, 0))
+        w["install"] = ttk.Button(btns, text=T("btn_install"), style="Accent.TButton", command=start)
+        w["install"].pack(side="right", padx=(0, 10))
         show_src_status()
         show_gpu()
         update_space()
@@ -1299,11 +1318,8 @@ def gui() -> None:
             check_src()  # the check message comes back in the new language
 
     def add_log(line):
-        box = w["log"]
-        box.configure(state="normal")
-        box.insert("end", line + "\n")
-        box.see("end")
-        box.configure(state="disabled")
+        st["log"].append(line)
+        w["details"].append(line)
 
     def browse(is_src):
         var = src_var if is_src else dst_var
@@ -1315,9 +1331,12 @@ def gui() -> None:
     def show_src_status():
         if st["src_msg"] is None:
             text = T("checking") if src_var.get().strip() else T("src_none")
+            style = "CardMuted.TLabel"
+        elif st["src_ok"]:
+            text, style = "✓  " + st["src_msg"], "CardOk.TLabel"
         else:
-            text = T("ok", msg=st["src_msg"]) if st["src_ok"] else T("error", msg=st["src_msg"])
-        w["src_status"].configure(text=text)
+            text, style = "✕  " + st["src_msg"], "CardBad.TLabel"
+        w["src_status"].configure(text=text, style=style)
 
     def show_gpu():
         g = st["gpu"]
@@ -1338,7 +1357,7 @@ def gui() -> None:
         st["src_ok"], st["src_size"], st["src_msg"] = False, None, None
         if "src_status" in w:
             show_src_status()
-        if not p:
+        if not p or demo:
             return
 
         def work():
@@ -1359,10 +1378,22 @@ def gui() -> None:
         try:
             free = free_bytes(Path(dst))
         except OSError:
-            w["space"].configure(text=T("drive_missing"))
+            w["space"].configure(text=T("drive_missing"), style="CardBad.TLabel")
             return
         mark = T("space_ok") if free >= need else T("space_low")
-        w["space"].configure(text=T("space", need=need / 1e9, free=free / 1e9, mark=mark))
+        w["space"].configure(text=T("space", need=need / 1e9, free=free / 1e9, mark=mark),
+                             style="CardMuted.TLabel" if free >= need else "CardBad.TLabel")
+
+    def lock_form():
+        for k in ("install", "close", "lang_box"):
+            if k in w:
+                w[k].configure(state="disabled")
+        todo = list(w["form"].winfo_children())
+        while todo:  # paths, browse buttons and options are fixed once the install runs
+            c = todo.pop()
+            todo += c.winfo_children()
+            if isinstance(c, (ttk.Entry, ttk.Button, ttk.Checkbutton)):
+                c.configure(state="disabled")
 
     def start():
         if st["busy"]:
@@ -1377,8 +1408,7 @@ def gui() -> None:
             return  # probe still running (a few seconds)
         src, dst = Path(src_var.get().strip()), Path(dst_var.get().strip())
         st["busy"] = st["started"] = True
-        for k in ("install", "close", "lang_box"):
-            w[k].configure(state="disabled")
+        lock_form()
         v = st["gpu"]["verdict"]
         print("vulkan: " + json.dumps(st["gpu"], ensure_ascii=False))
 
@@ -1398,29 +1428,43 @@ def gui() -> None:
 
     def finished(res):
         st["busy"] = False
+        st["result"] = res
         w["close"].configure(state="normal")
+        w["install"].pack_forget()
         bar = w["bar"]
         bar.stop()
         bar.configure(mode="determinate", value=1000)
-        fp = w["fp"]
-        ttk.Label(fp, text=T("fp_label")).pack(anchor="w")
-        e = ttk.Entry(fp, font=("Consolas", 18, "bold"), width=14, justify="center")
-        e.insert(0, res["fingerprint"])
-        e.configure(state="readonly")
-        e.pack(anchor="w", pady=2)
-        txt = T("fp_text")
-        if not res.get("fingerprint_ok"):
-            txt += "\n" + T("fp_mismatch", exp=res["expected_fingerprint"])
-        if res.get("hd_failed"):
-            txt += "\n" + T("fp_hd_failed")
-        if not res.get("dxvk", True):
-            txt += "\n" + T("fp_native")
-        ttk.Label(fp, text=txt, wraplength=720, justify="left").pack(anchor="w")
-        row = ttk.Frame(fp)
-        row.pack(anchor="w", pady=6)
+        w["form"].pack_forget()
+        done = w["done"]
+        done.pack(fill="x")
         dst = Path(dst_var.get().strip())
-        ttk.Button(row, text=T("btn_open"), command=lambda: os.startfile(dst)).pack(side="left")
-        ttk.Button(row, text=T("btn_play"), command=lambda: start_installed(dst)).pack(side="left", padx=6)
+        ttk.Label(done, text="✓  " + T("done_title"), style="Big.TLabel").pack(anchor="w")
+        ttk.Label(done, text=T("done_where", dst=dst), style="Muted.TLabel", wraplength=730,
+                  justify="left").pack(anchor="w", pady=(2, 16))
+        c = ttk.Frame(done, style="Card.TFrame", padding=(16, 12, 16, 14))
+        c.pack(fill="x")
+        ttk.Label(c, text=T("fp_label").rstrip(":").upper(), style="CardSection.TLabel").pack(anchor="w")
+        fp_box = tk.Entry(c, font=(ui.MONO, 24, "bold"), width=14, justify="center", relief="flat",
+                          readonlybackground=ui.FIELD, foreground=ui.GOLD_HI, highlightthickness=1,
+                          highlightbackground=ui.GOLD_LO, highlightcolor=ui.GOLD_LO, borderwidth=6)
+        fp_box.insert(0, res["fingerprint"])
+        fp_box.configure(state="readonly")  # selectable, so players can copy it
+        fp_box.pack(anchor="w", pady=(8, 10))
+        ttk.Label(c, text=T("fp_text"), wraplength=700, justify="left", style="CardMuted.TLabel").pack(anchor="w")
+        notes = []
+        if not res.get("fingerprint_ok"):
+            notes.append(T("fp_mismatch", exp=res["expected_fingerprint"]))
+        if res.get("hd_failed"):
+            notes.append(T("fp_hd_failed"))
+        if not res.get("dxvk", True):
+            notes.append(T("fp_native"))
+        for n in notes:
+            ttk.Label(c, text=n, wraplength=700, justify="left", style="CardBad.TLabel").pack(anchor="w", pady=(6, 0))
+        play = ttk.Button(w["close"].master, text="▶  " + T("btn_play"), style="Accent.TButton",
+                          command=lambda: (start_installed(dst), root.destroy()))
+        play.pack(side="right", padx=(0, 10))
+        ttk.Button(w["close"].master, text=T("btn_open"), command=lambda: os.startfile(dst)).pack(side="left")
+        play.focus_set()
         w["step"].set(T("done_status"))
 
     def poll():
@@ -1432,16 +1476,7 @@ def gui() -> None:
                 elif kind == "step":
                     text, frac = val
                     w["step"].set(text)
-                    bar = w["bar"]
-                    if frac is None:
-                        if str(bar.cget("mode")) != "indeterminate":
-                            bar.configure(mode="indeterminate")
-                            bar.start(15)
-                    else:
-                        if str(bar.cget("mode")) != "determinate":
-                            bar.stop()
-                            bar.configure(mode="determinate")
-                        bar.configure(value=int(frac * 1000))
+                    _progress(w["bar"], frac)
                 elif kind == "src":
                     path, ok, msg, size = val
                     if path != src_var.get().strip():
@@ -1462,7 +1497,10 @@ def gui() -> None:
                     w["bar"].stop()
                     w["bar"].configure(mode="determinate", value=0)
                     w["step"].set(T("aborted"))
-                    messagebox.showerror(APP, T("err_failed", msg=val, log=log_path()))
+                    if not w["details"].expanded:
+                        w["details"].toggle()
+                    if not demo:
+                        messagebox.showerror(APP, T("err_failed", msg=val, log=log_path()))
         except queue.Empty:
             pass
         root.after(100, poll)
@@ -1470,18 +1508,23 @@ def gui() -> None:
     build_form()
     src_var.trace_add("write", lambda *_: root.after_idle(check_src) if not st["busy"] else None)
     dst_var.trace_add("write", update_space)
-    threading.Thread(target=lambda: q.put(("gpu", probe_gpu())), daemon=True).start()
-    found = candidates()
-    if found:
-        src_var.set(str(found[0]))
-    else:
-        show_src_status()
+    if not demo:
+        threading.Thread(target=lambda: q.put(("gpu", probe_gpu())), daemon=True).start()
+        found = candidates()
+        if found:
+            src_var.set(str(found[0]))
+        else:
+            show_src_status()
     root.protocol("WM_DELETE_WINDOW", lambda: None if st["busy"] else root.destroy())
+    ui.center(root)
+    ui.ready(root, "setup", q=q, st=st, w=w, src=src_var, dst=dst_var, lock=lock_form,
+             build_form=build_form)
     poll()
     root.mainloop()
 
 
 def main() -> int:
+    raf_proc.install()  # windowed exe: no console window for any child (texconv, ESRGAN, powershell, git)
     if "--vulkan-probe" in sys.argv:
         out = sys.argv[sys.argv.index("--vulkan-probe") + 1]
         Path(out).write_text(json.dumps(vulkan_probe()), encoding="utf-8")
@@ -1491,7 +1534,6 @@ def main() -> int:
             ctypes.windll.user32.SetProcessDPIAware()  # raf_patch.desktop_mode sets it later anyway
         except Exception:  # noqa: BLE001
             pass
-    no_console_windows()
     if "--selftest" in sys.argv:
         return selftest(sys.argv[1:])
     if "--silent" in sys.argv:
