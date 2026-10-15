@@ -55,6 +55,12 @@ Not tested. The game & the installer are Windows programs, so Proton or Wine is 
 
 If you get it running, please open an issue & tell me how.
 
+## Problems
+
+The installer writes a log to `%TEMP%\RaF-Remaster-Setup.log`. Please attach it when you open an issue.
+
+To remove the remaster, use the uninstall shortcut. Your original game stays as it was.
+
 ## Building from source
 
 You need Windows, [uv](https://docs.astral.sh/uv/) & the python.org build of Python 3.14.
@@ -77,6 +83,8 @@ python tools/run_stub_tests.py
 ## Credits
 
 Remastered by [Alexander West](https://thewest.cc/raf).
+
+Built with help from Claude (Anthropic) as a coding assistant. All features were tested in the real game.
 
 Third-party tools shipped with the installer:
 
