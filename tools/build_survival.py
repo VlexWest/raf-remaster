@@ -688,6 +688,18 @@ def map_id(name):
     return 0x7A000000 | (int(hashlib.sha1(name.encode()).hexdigest(), 16) & 0x00FFFFFF)
 
 
+def set_terrain_environment(raw, env):
+    """The map's lighting (.env name) is a length-prefixed string in the terrain chunk (4):
+    u32 len incl. two NULs, text, two NULs (e.g. "hdri_clearsky_grasslands" in (4) plains).
+    The Environment trigger effect alone did not change the lighting live."""
+    import re
+    m = re.search(rb'(.{4})(hdri[ -~]{3,60})\0\0', raw, re.S)
+    if not m or struct.unpack('<I', m.group(1))[0] != len(m.group(2)) + 2:
+        raise ValueError('environment name not found in the terrain chunk')
+    new = env.encode('ascii')
+    return raw[:m.start()] + struct.pack('<I', len(new) + 2) + new + raw[m.end(2):]
+
+
 def build_scn(template_path, theme, vocab, opts):
     f = R.load_any(template_path)
     if any(c[0:2] != [4, 0] for c in f.chunks):
@@ -697,6 +709,8 @@ def build_scn(template_path, theme, vocab, opts):
     plan = (build_probe if theme.get('probe') else build_mode)(m, theme, vocab, opts, map_size)
     raw = m.serialize()
     f.put(6, raw)
+    if theme.get('environment'):
+        f.put(4, set_terrain_environment(f.get(4), theme['environment']))
     h = R.parse_header(f.header)
     file_name = theme['map'] + '.scn'
     pretty = theme['map'].replace('survival zombies', 'Survival Zombies').replace(
@@ -753,6 +767,7 @@ def main(argv=None):
     ap.add_argument('--unitset-base', type=int, default=UNITSET_BASE,
                     help='class value of dbunitset record 0 (137 per the runtime code; the '
                          'campaign files suggest 134, see docs/scenario-format.md 3.5)')
+    ap.add_argument('--waves', type=int, help='LIVE TESTING ONLY: number of waves (win-path test)')
     ap.add_argument('--test-schedule', action='store_true',
                     help='LIVE TESTING ONLY: wave 1 at 0:30, 20 s apart, 1/4 size')
     opts = ap.parse_args(argv)
@@ -769,6 +784,9 @@ def main(argv=None):
                                          help='DIAGNOSTIC MAP for the survival triggers.')
         if opts.test_schedule:
             theme = test_schedule(theme)
+        if opts.waves:
+            theme = dict(theme, waves=opts.waves,
+                         help='TEST %d WAVES. ' % opts.waves + theme['help'])
         data, raw, plan = build_scn(template, theme, vocab, opts)
         scn = out / 'Data' / 'scenarios' / (theme['map'] + '.scn')
         rmv = out / 'Data' / 'map scripts' / (theme['map'] + '.rmv')

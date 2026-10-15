@@ -506,7 +506,7 @@ FEATURES = {
     "ai-personalities": True,
     "unit-ai": True,
     "maps": False,
-    "survival": False,
+    "survival": True,
     "survival-probe": False,
     "lang-en": False,
     "credits": True,
