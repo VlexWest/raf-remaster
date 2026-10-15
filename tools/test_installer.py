@@ -88,10 +88,31 @@ def check_verdict():
     check(not v["dxvk"], "verdict: push constants below 256 -> native")
 
 
+def check_icon():
+    """Emblem: multi-size .ico (16..256) the shell can pick small sizes from, header + checkbox images."""
+    from PIL import Image
+
+    import make_icon
+
+    with tempfile.TemporaryDirectory() as t:
+        files = make_icon.write_all(Path(t))
+        with Image.open(files["ico"]) as ico:
+            sizes = sorted(s[0] for s in ico.info.get("sizes", ()))
+            ico.size = (16, 16)
+            small = ico.convert("RGBA")
+        check(sizes == sorted(make_icon.ICO_SIZES), f"icon: raf.ico holds {sizes}")
+        check(small.getpixel((8, 8))[3] == 255 and small.getpixel((0, 15))[3] == 0,
+              "icon: 16 px frame is opaque in the middle, transparent in the corner")
+        names = {p.name for p in Path(t).iterdir()}
+        check({"raf-header.png", "raf-header-40.png", "check-on.png", "check-off.png"} <= names,
+              "icon: header emblem and checkbox images written")
+
+
 def main():
     rt.set_lang("de")
     check_texts()
     check_verdict()
+    check_icon()
     tmp = Path(tempfile.mkdtemp(prefix="raf-inst-test-"))
     try:
         src = tmp / "Rise and Fall"
