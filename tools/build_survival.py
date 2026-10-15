@@ -41,7 +41,7 @@ RES_GOLD, RES_WOOD = 3, 4
 ATTR_ATTACK, ATTR_HP, ATTR_SPEED = 40, 46, 51          # ChangeUnitClassAttribute ids
 STATE_IDLE = 5000
 AI_SETTING_ENABLED = 0
-UNITSET_BASE = 137                                      # EESMObject class filter: 137 + unitset index
+UNITSET_BASE = 134    # class value of dbunitset record 0: live test 2026-10-15 (137 emptied the TC selection) and every campaign file
 FOREVER = 999999                                        # GameHasAttribute upper bound (seconds)
 
 UNITSETS = {
@@ -296,8 +296,16 @@ class Builder:
         return self.ids[slot]
 
     # objects --------------------------------------------------------------------------------
+    def area(self, name, left, top, right, bottom):
+        """Rectangular area (tile coordinates), base fields as in the shipped maps."""
+        a = {'_type': 0, 'x': 0.0, 'y': 0.0, 'left': left, 'top': top, 'right': right,
+             'bottom': bottom, 'b80': 1, 'b81': 0, 'u74': self._id(4), 'u7c': 0, 'u78': 0,
+             'name': S(name), 'desc': S('')}
+        self.m.areas.append(a)
+        return 1 + len(self.m.areas)      # area ref (2 + index)
+
     def obj(self, name, player, unit_type=0, unit_class=0, count=(1, 9999), near=None,
-            state=None):
+            state=None, area=None):
         o = {'name': S(name), 'desc': S(''), 'units': [], 'bdc': 0, 'player': player,
              'u80': unit_class, 'u84': unit_type, 'u94': 0,
              'class_name': S(str(count[0])), 'unit_name': S(str(count[1])), 'bdd': 1,
@@ -309,6 +317,8 @@ class Builder:
             o['ub8'], o['u90'], o['u8c'] = 1, near, 0
         if state is not None:
             o['uc4'], o['ua8'] = 1, state
+        if area is not None:              # inside area (shipped maps: ub4=1, u88=area ref)
+            o['ub4'], o['u88'] = 1, area
         self.m.objects.append(o)
         return len(self.m.objects)        # object ref (1-based, 0 = default object)
 
@@ -399,47 +409,78 @@ class Builder:
 # --------------------------------------------------------------------------- the mode
 
 
-def build_mode(m, theme, vocab, opts):
+def spawn_rect(map_size, half=5):
+    """Spawn area at the map centre: on the symmetric 4-player template every start corner is
+    the same walk away, and it does not depend on which lobby slot the computer takes."""
+    w, h = map_size
+    cx, cy = w // 2, h // 2
+    return (float(cx - half), float(cy - half), float(cx + half), float(cy + half))
+
+
+def enemy_types(theme, vocab):
+    """Every unit type the waves can create (roster + bosses), as dbobjects indices."""
+    types = {vocab.unit(n) for role in theme['roster'].values() for n in role.values()}
+    types |= {vocab.unit(hero) for heroes in theme['bosses'].values() for hero, _ in heroes}
+    return sorted(types)
+
+
+def build_mode(m, theme, vocab, opts, map_size):
     b = Builder(m)
     waves = theme['waves']
     times = wave_times(theme)
     sets = {k: vocab.unitset(v) for k, v in UNITSETS.items()}
 
+    # placement: the encoding of the shipped maps (contested sands "Create WJ1": object with
+    # player, unit type, count and "inside area"); all 211 shipped Create effects use an area,
+    # none places units near another object
+    a_spawn = b.area('SV Spawn centre', *spawn_rect(map_size))
+
     # selections ------------------------------------------------------------------------------
     o_enemy_tc = b.obj('SV Enemy town centres', PLAYER_ALL_CPUS, unit_class=sets['town_centers'],
                        count=(1, 99))
-    o_enemy_cit = b.obj('SV Enemy citizens', PLAYER_ALL_CPUS, unit_class=sets['citizens'],
-                        count=(1, 9999))
-    o_enemy_army = b.obj('SV Enemy army', PLAYER_ALL_CPUS, unit_class=sets['army'],
-                         count=(1, 9999))
-    o_enemy_heroes = b.obj('SV Enemy heroes', PLAYER_ALL_CPUS, unit_class=sets['heroes'],
-                           count=(1, 99))
-    o_enemy_idle = b.obj('SV Enemy army idle', PLAYER_ALL_CPUS, unit_class=sets['army'],
-                         count=(1, 9999), state=STATE_IDLE)
+    spawn = dict(area=a_spawn) if opts.spawn == 'area' else dict(near=o_enemy_tc)
     o_human_tc = b.obj('SV Human town centres', PLAYER_ALL_HUMANS,
                        unit_class=sets['town_centers'], count=(1, 99))
     o_human_tc2 = b.obj('SV Two human town centres', PLAYER_ALL_HUMANS,
                         unit_class=sets['town_centers'], count=(2, 99))
+    # enemy units by exact type: no unit-set membership involved (live test 2026-10-15: the
+    # computer had nothing left after the unit-set based clean-up)
+    o_type = {ut: b.obj('SV Enemy type %d' % ut, PLAYER_ALL_CPUS, unit_type=ut, count=(1, 9999))
+              for ut in enemy_types(theme, vocab)}
+    citizens = vocab.set_members(vocab.unitset(UNITSETS['citizens']))['types']
+    o_cit = [b.obj('SV Enemy citizen type %d' % ut, PLAYER_ALL_CPUS, unit_type=ut,
+                   count=(1, 9999)) for ut in citizens]
 
     fmt = dict(waves=waves)
     T = theme['text']
 
+    def remove_citizens(tag):
+        return [(b.eff((1, 4), 'SV Remove enemy citizens %d%s' % (i, tag), object=o), 0)
+                for i, o in enumerate(o_cit)]
+
+    def orders(tag, delay):
+        out = []
+        for ut, o in o_type.items():
+            out.append((b.eff((1, 7), 'SV Aggressive %d%s' % (ut, tag), stance=STANCE_AGGRESSIVE,
+                              object=o), delay))
+            out.append((b.eff((1, 5), 'SV Attack-move %d%s' % (ut, tag), target=o_human_tc,
+                              task=TASK_ATTACK_MOVE, b48=0, object=o), delay + 50))
+        return out
+
     # setup -----------------------------------------------------------------------------------
-    setup = [(b.eff((6, 4), 'SV Computer AI off', setting=AI_SETTING_ENABLED, on=0,
-                    player=PLAYER_ALL_CPUS), 0),
-             (b.eff((1, 7), 'SV Enemy TC invulnerable', stance=STANCE_INVULNERABLE,
-                    object=o_enemy_tc), 0),
-             (b.eff((1, 4), 'SV Remove enemy citizens', object=o_enemy_cit), 0),
-             # the computer's own start army and hero would otherwise join wave 1 and could
-             # block the victory check (hero revive); waves bring their own units
-             (b.eff((1, 4), 'SV Remove enemy start army', object=o_enemy_army), 0),
-             (b.eff((1, 4), 'SV Remove enemy start heroes', object=o_enemy_heroes), 0),
-             (b.eff((2, 4), 'SV Enemy gold 0', resource=RES_GOLD, amount=0, text='0',
-                    player=PLAYER_ALL_CPUS), 0),
-             (b.eff((2, 4), 'SV Enemy wood 0', resource=RES_WOOD, amount=0, text='0',
-                    player=PLAYER_ALL_CPUS), 0),
-             (b.chat(T['intro'] % fmt, 20), 100),
-             (b.counter(T['next'] % {'k': 1}, times[0] - 2), 100)]
+    setup = []
+    if opts.ai_off:
+        setup.append((b.eff((6, 4), 'SV Computer AI off', setting=AI_SETTING_ENABLED, on=0,
+                            player=PLAYER_ALL_CPUS), 0))
+    setup += [(b.eff((1, 7), 'SV Enemy TC invulnerable', stance=STANCE_INVULNERABLE,
+                     object=o_enemy_tc), 0)]
+    setup += remove_citizens('')
+    setup += [(b.eff((2, 4), 'SV Enemy gold 0', resource=RES_GOLD, amount=0, text='0',
+                     player=PLAYER_ALL_CPUS), 0),
+              (b.eff((2, 4), 'SV Enemy wood 0', resource=RES_WOOD, amount=0, text='0',
+                     player=PLAYER_ALL_CPUS), 0),
+              (b.chat(T['intro'] % fmt, 20), 100),
+              (b.counter(T['next'] % {'k': 1}, times[0] - 2), 100)]
     if theme['environment']:
         setup.append((b.eff((5, 7), 'SV Environment', env=theme['environment'], i54=10, b58=1,
                             b59=1), 0))
@@ -452,8 +493,8 @@ def build_mode(m, theme, vocab, opts):
 
     # keep the computer passive: no citizens, no money (looping every ~20 s)
     b.trigger('SV Keep enemy passive', [(b.time_after(5), False)],
-              [(b.eff((1, 4), 'SV Remove enemy citizens (loop)', object=o_enemy_cit), 0),
-               (b.eff((2, 4), 'SV Enemy gold 0 (loop)', resource=RES_GOLD, amount=0, text='0',
+              remove_citizens(' (loop)') +
+              [(b.eff((2, 4), 'SV Enemy gold 0 (loop)', resource=RES_GOLD, amount=0, text='0',
                       player=PLAYER_ALL_CPUS), 0),
                (b.eff((2, 4), 'SV Enemy wood 0 (loop)', resource=RES_WOOD, amount=0, text='0',
                       player=PLAYER_ALL_CPUS), 0),
@@ -467,7 +508,7 @@ def build_mode(m, theme, vocab, opts):
         types = sorted({vocab.unit(n) for role in theme['roster'].values() for n in role.values()})
         for ut in types:
             o_t = b.obj('SV Template %d' % ut, PLAYER_ALL_CPUS, unit_type=ut, count=(1, 1),
-                        near=o_enemy_tc)
+                        **spawn)
             eff.append((b.eff((1, 0), 'SV Create template %d' % ut, object=o_t), 0))
             for attr, op, val, label in theme['unit_mods']:
                 eff.append((b.eff((1, 12), 'SV Zombie %s %d' % (label, ut), attr=attr, op=op,
@@ -476,12 +517,6 @@ def build_mode(m, theme, vocab, opts):
         b.trigger('SV Zombie class buffs', [(b.time_after(2), False)], eff)
 
     # waves -----------------------------------------------------------------------------------
-    order_army = b.eff((1, 5), 'SV Army attack-move to human TCs', target=o_human_tc,
-                       task=TASK_ATTACK_MOVE, b48=0, object=o_enemy_army)
-    order_heroes = b.eff((1, 5), 'SV Heroes attack-move to human TCs', target=o_human_tc,
-                         task=TASK_ATTACK_MOVE, b48=0, object=o_enemy_heroes)
-    stance_army = b.eff((1, 7), 'SV Army aggressive', stance=STANCE_AGGRESSIVE,
-                        object=o_enemy_army)
     snd_wave = b.sound(theme['sounds']['wave'])
     snd_boss = b.sound(theme['sounds']['boss'])
     plan = []
@@ -490,23 +525,24 @@ def build_mode(m, theme, vocab, opts):
         f = dict(fmt, k=k)
         eff = [(b.chat(T['wave'] % f, 12), 0), (snd_wave, 0)]
         groups = wave_groups(theme, k)
+        used = set()
         for role, lv, n in groups:
             ut = vocab.unit(theme['roster'][role][lv])
+            used.add(ut)
             o = b.obj('SV W%02d %s L%d x%d' % (k, role, lv, n), PLAYER_ALL_CPUS, unit_type=ut,
-                      count=(n, n), near=o_enemy_tc)
+                      count=(n, n), **spawn)
             eff.append((b.eff((1, 0), 'SV W%02d create %s' % (k, role), object=o), 0))
         bosses = theme['bosses'].get(k, [])
         for i, (hero, label) in enumerate(bosses):
             ut = vocab.unit(hero)
+            used.add(ut)
             o = b.obj('SV W%02d boss %d' % (k, i + 1), PLAYER_ALL_CPUS, unit_type=ut, count=(1, 1),
-                      near=o_enemy_tc)
+                      **spawn)
             eff.append((b.eff((1, 0), 'SV W%02d create boss %d' % (k, i + 1), object=o), 0))
             if opts.boss_buffs and k in theme['boss_hp_bonus'] and i == 0:
-                o_b = b.obj('SV W%02d boss class' % k, PLAYER_ALL_CPUS, unit_type=ut,
-                            count=(1, 99))
                 eff.append((b.eff((1, 12), 'SV W%02d boss HP' % k, attr=ATTR_HP, op=0,
                                   value=theme['boss_hp_bonus'][k], b4c=1, u50=0, i54=-1,
-                                  object=o_b), 50))
+                                  object=o_type[ut]), 50))
         if bosses:
             names = boss_label(bosses)
             eff += [(b.chat(T['boss'] % dict(f, boss=names), 15), 50), (snd_boss, 50),
@@ -515,7 +551,11 @@ def build_mode(m, theme, vocab, opts):
         if k == waves and theme['final_environment']:
             eff.append((b.eff((5, 7), 'SV Final environment', env=theme['final_environment'],
                               i54=20, b58=1, b59=1), 0))
-        eff += [(stance_army, 100), (order_army, 150), (order_heroes, 150)]
+        for ut in sorted(used):
+            eff += [(b.eff((1, 7), 'SV W%02d aggressive %d' % (k, ut), stance=STANCE_AGGRESSIVE,
+                           object=o_type[ut]), 100),
+                    (b.eff((1, 5), 'SV W%02d attack-move %d' % (k, ut), target=o_human_tc,
+                           task=TASK_ATTACK_MOVE, b48=0, object=o_type[ut]), 150)]
         if k < waves:
             eff.append((b.counter(T['next'] % {'k': k + 1}, times[k] - t - 1), 200))
         else:
@@ -527,28 +567,25 @@ def build_mode(m, theme, vocab, opts):
         for role, lv, n in bonus:
             ut = vocab.unit(theme['roster'][role][lv])
             o = b.obj('SV W%02d bonus %s L%d x%d' % (k, role, lv, n), PLAYER_ALL_CPUS,
-                      unit_type=ut, count=(n, n), near=o_enemy_tc)
+                      unit_type=ut, count=(n, n), **spawn)
             beff.append((b.eff((1, 0), 'SV W%02d bonus %s' % (k, role), object=o), 50))
-        beff += [(stance_army, 150), (order_army, 200)]
+            beff.append((b.eff((1, 5), 'SV W%02d bonus attack-move %d' % (k, ut),
+                               target=o_human_tc, task=TASK_ATTACK_MOVE, b48=0,
+                               object=o_type[ut]), 200))
         b.trigger('SV Wave %02d co-op bonus' % k,
                   [(b.time_after(t, 'SV Wave %02d bonus time' % k), False),
                    (b.exists(o_human_tc2, 'SV Two human TCs exist (W%02d)' % k), False)], beff)
         plan.append({'wave': k, 'time': t, 'groups': groups, 'bonus': bonus,
                      'bosses': boss_label(bosses)})
 
-    # idle enemies attack again
-    b.trigger('SV Idle enemies attack', [(b.exists(o_enemy_idle, 'SV Idle enemy army exists'),
-                                          False)],
-              [(stance_army, 0),
-               (b.eff((1, 5), 'SV Idle army attack-move', target=o_human_tc,
-                      task=TASK_ATTACK_MOVE, b48=0, object=o_enemy_idle), 0), (order_heroes, 0)],
-              looping=True, true_for=8)
+    # enemies that stopped (target dead, fight over) march again every 15 s
+    b.trigger('SV Enemies keep attacking', [(b.time_after(times[0] + 15, 'SV After wave 1'),
+                                             False)],
+              orders(' (loop)', 0), looping=True, true_for=15)
 
     # end of game -----------------------------------------------------------------------------
-    c_army = b.exists(o_enemy_army, 'SV Enemy army exists')
-    c_heroes = b.exists(o_enemy_heroes, 'SV Enemy heroes exist')
-    b.trigger('SV Victory', [(b.time_after(times[-1] + 10, 'SV After last wave'), False),
-                             (c_army, True), (c_heroes, True)],
+    alive = [(b.exists(o, 'SV Enemy type %d exists' % ut), True) for ut, o in o_type.items()]
+    b.trigger('SV Victory', [(b.time_after(times[-1] + 10, 'SV After last wave'), False)] + alive,
               [(b.chat(T['win'], 30), 0), (b.sound(theme['sounds']['win']), 0),
                (b.eff((2, 0), 'SV Victory humans', player=PLAYER_ALL_HUMANS), 300),
                (b.eff((2, 2), 'SV Defeat computers', player=PLAYER_ALL_CPUS), 400)],
@@ -560,6 +597,76 @@ def build_mode(m, theme, vocab, opts):
               true_for=3)
     b.finish()
     return plan
+
+
+def build_probe(m, theme, vocab, opts, map_size):
+    """Diagnostic map: one trigger action at a time, each announced in chat with its label, each
+    probe a different unit type so a screenshot tells them apart. Read the result with the
+    table in docs/survival.md (section 'Probe map')."""
+    b = Builder(m)
+    sets = {k: vocab.unitset(v) for k, v in UNITSETS.items()}
+    a_spawn = b.area('SV Spawn centre', *spawn_rect(map_size))
+    o_enemy_tc = b.obj('SV Enemy town centres', PLAYER_ALL_CPUS, unit_class=sets['town_centers'],
+                       count=(1, 99))
+    o_human_tc = b.obj('SV Human town centres', PLAYER_ALL_HUMANS,
+                       unit_class=sets['town_centers'], count=(1, 99))
+    P = PERSIAN
+    steps = [  # (seconds, label, player enum, unit name, placement)
+        (5, 'P1 human: L1 sword at map centre', 7, P['sword'][1], 'area'),
+        (10, 'all computers: L1 spear at map centre', PLAYER_ALL_CPUS, P['spear'][1], 'area'),
+        (15, 'slot 2: L1 archer at map centre', 8, P['archer'][1], 'area'),
+        (20, 'slot 3: L1 cavalry at map centre', 9, P['cavalry'][1], 'area'),
+        (25, 'slot 4: L3 spear at map centre', 10, P['spear'][3], 'area'),
+        (30, 'all computers: L3 sword next to their TC', PLAYER_ALL_CPUS, P['sword'][3], 'near'),
+        (35, 'all computers: elephant at centre, 3 units', PLAYER_ALL_CPUS, P['elephant'][3],
+         'area3'),
+    ]
+    probe_types = []
+    for t, label, player, unit, place in steps:
+        ut = vocab.unit(unit)
+        kw = dict(near=o_enemy_tc) if place == 'near' else dict(area=a_spawn)
+        n = 3 if place == 'area3' else 1
+        o = b.obj('SV Probe %d' % t, player, unit_type=ut, count=(n, n), **kw)
+        if player == PLAYER_ALL_CPUS:
+            probe_types.append(ut)
+        b.trigger('SV Probe %02d s' % t, [(b.time_after(t), False)],
+                  [(b.chat('PROBE %d s: %s' % (t, label), 25), 0),
+                   (b.eff((1, 0), 'SV Probe create %d' % t, object=o), 50)])
+    # selections and diplomacy readings
+    c_tc = b.exists(o_enemy_tc, 'SV Probe enemy TC exists')
+    b.trigger('SV Probe 40 s TC yes', [(b.time_after(40), False), (c_tc, False)],
+              [(b.chat('PROBE 40 s: enemy town centre selection FOUND', 25), 0)])
+    b.trigger('SV Probe 40 s TC no', [(b.time_after(40), False), (c_tc, True)],
+              [(b.chat('PROBE 40 s: enemy town centre selection EMPTY', 25), 0)])
+    for ut in probe_types:
+        o = b.obj('SV Probe type %d' % ut, PLAYER_ALL_CPUS, unit_type=ut, count=(1, 99))
+        c = b.exists(o, 'SV Probe type %d exists' % ut)
+        b.trigger('SV Probe 45 s type %d' % ut, [(b.time_after(45), False), (c, False)],
+                  [(b.chat('PROBE 45 s: computer owns type %d (%s)' % (ut, vocab.objects[ut][:32]),
+                           25), 0)])
+        b.trigger('SV Probe 50 s attack %d' % ut, [(b.time_after(50), False)],
+                  [(b.eff((1, 7), 'SV Probe aggressive %d' % ut, stance=STANCE_AGGRESSIVE,
+                          object=o), 0),
+                   (b.eff((1, 5), 'SV Probe attack-move %d' % ut, target=o_human_tc,
+                          task=TASK_ATTACK_MOVE, b48=0, object=o), 50)])
+    b.trigger('SV Probe 50 s msg', [(b.time_after(50), False)],
+              [(b.chat('PROBE 50 s: computer units ordered to attack-move to your TC', 25), 0)])
+    if opts.ai_off:
+        b.trigger('SV Probe 55 s AI off', [(b.time_after(55), False)],
+                  [(b.chat('PROBE 55 s: computer AI switched off', 25), 0),
+                   (b.eff((6, 4), 'SV Probe AI off', setting=AI_SETTING_ENABLED, on=0,
+                          player=PLAYER_ALL_CPUS), 0)])
+    b.trigger('SV Probe 60 s spawn after AI off', [(b.time_after(60), False)],
+              [(b.chat('PROBE 60 s: all computers: L5 sword at centre after AI off', 25), 0),
+               (b.eff((1, 0), 'SV Probe create 60', object=b.obj(
+                   'SV Probe 60', PLAYER_ALL_CPUS, unit_type=vocab.unit(P['sword'][5]),
+                   count=(2, 2), area=a_spawn)), 50)])
+    b.trigger('SV Probe 120 s victory', [(b.time_after(120), False)],
+              [(b.chat('PROBE 120 s: victory for all humans in 3 s', 25), 0),
+               (b.eff((2, 0), 'SV Probe victory', player=PLAYER_ALL_HUMANS), 300)])
+    b.finish()
+    return [{'wave': 0, 'time': t, 'groups': [], 'bonus': [], 'bosses': label}
+            for t, label, *_ in steps]
 
 
 # --------------------------------------------------------------------------- file level
@@ -586,7 +693,8 @@ def build_scn(template_path, theme, vocab, opts):
     if any(c[0:2] != [4, 0] for c in f.chunks):
         raise ValueError('template chunk version is not 4.0')
     m = R.Manager.parse(f.get(6))
-    plan = build_mode(m, theme, vocab, opts)
+    map_size = struct.unpack_from('<II', f.get(4), 0)      # terrain chunk: width, height
+    plan = (build_probe if theme.get('probe') else build_mode)(m, theme, vocab, opts, map_size)
     raw = m.serialize()
     f.put(6, raw)
     h = R.parse_header(f.header)
@@ -635,6 +743,13 @@ def main(argv=None):
     ap.add_argument('--no-diplomacy', dest='force_diplomacy', action='store_false',
                     help='do not set "humans allied, computers hostile" by trigger at start')
     ap.add_argument('--table', action='store_true', help='print the wave tables (markdown)')
+    ap.add_argument('--spawn', choices=['area', 'near'], default='area',
+                    help='area: map centre (encoding of the shipped maps, default); near: next '
+                         'to the computer town centre (no shipped precedent, failed live)')
+    ap.add_argument('--probe', action='store_true',
+                    help='LIVE TESTING ONLY: write "(4) survival probe", one action per step')
+    ap.add_argument('--keep-ai', dest='ai_off', action='store_false',
+                    help='do not switch the computer AI off at start')
     ap.add_argument('--unitset-base', type=int, default=UNITSET_BASE,
                     help='class value of dbunitset record 0 (137 per the runtime code; the '
                          'campaign files suggest 134, see docs/scenario-format.md 3.5)')
@@ -646,8 +761,12 @@ def main(argv=None):
     vocab = Vocab(game, opts.unitset_base)
     out = Path(opts.overlay_dir)
     themes = sorted(THEMES) if opts.theme == 'all' else [opts.theme]
+    if opts.probe:
+        themes = ['probe']
     for name in themes:
-        theme = THEMES[name]
+        theme = THEMES.get(name) or dict(THEMES['classic'], map='(4) survival probe',
+                                         title='Survival probe', probe=True,
+                                         help='DIAGNOSTIC MAP for the survival triggers.')
         if opts.test_schedule:
             theme = test_schedule(theme)
         data, raw, plan = build_scn(template, theme, vocab, opts)

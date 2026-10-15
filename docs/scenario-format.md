@@ -185,7 +185,7 @@ An object is a unit filter used by conditions and effects (and as the template f
 |---|---|
 | unit list + 0xdc | fixed list of placed units; when 0xdc is 0 the filter below is used |
 | 0x7c player | player enum (below) |
-| 0x80 class | 0 any; 1-14 (unit class+1); 15-95 family; 96-136 (third category); **137 + dbunitset index** (FUN_008ce8f0, array 0xcef2e0 is in table order: code reads index 116/117 for "AI-Undesirable Units - Sea/Air") |
+| 0x80 class | 0 any; 1-14 (unit class+1); 15-95 family; 96-136 (third category); unit sets above that. **In-game test: class = 134 + dbunitset table index** (note below) |
 | 0x84 type | dbobjects record index |
 | 0x38 / 0x50 | min / max count as decimal text (may hold expressions, FUN_008afc10); ObjectExists is true when >= min match; Create makes a random number in [min, max] |
 | 0xdd | 1 = dynamic (otherwise the selection is frozen after the first match) |
@@ -196,9 +196,14 @@ An object is a unit filter used by conditions and effects (and as the template f
 | 0xdf | negate the type filter |
 | 0xb0 | object id |
 
-Observation: the campaign scenarios store class values that match `134 + index` of today's
-dbunitset (auto-names like `<Set: A-All Swordsman (Family)*>`), the runtime uses `137 + index`.
-Their sets were probably authored against an older table; our maps use the runtime rule.
+Unit-set class values: every campaign file stores `134 + table index` (auto-names like
+`<Set: A-All Swordsman (Family)*>` match that), and the in-game test of 2026-10-15 agrees: with
+134 the "human town centres" selection works, with 137 it is empty (game lost after 30 s).
+My first reading of `FUN_008ce8f0` (`class - 0x89` into the array at 0xcef2e0) gave 137; the
+array evidently holds three entries fewer than the table, which the decompile did not show.
+**Confirmed in game: 134.** Creation placement: all 211 Create effects in the shipped scenarios use
+"inside area" (0xb4 = 1); none uses "near object" (0xb8), and our near-object waves did not
+appear in the in-game test.
 
 ### 3.6 Enums
 

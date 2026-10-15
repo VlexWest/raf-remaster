@@ -25,10 +25,16 @@ für beide Rechner gleich.
 wählen, Menschen auf Platz 1 und 2 (gleiches Team), **genau einen Computergegner** hinzufügen
 (beliebiger Platz, anderes Team), Rest leer. Solo: du plus ein Computer.
 
-**Stand:** gebaut und offline geprüft (Format-Rundlauf, Referenzen, Vokabular gegen die
-Originaldateien, Simulation der Trigger gegen eine Attrappe: Sieg, Solo, Niederlage, frühe
-Niederlage, Überlebende). **Im Spiel ist noch nichts getestet.** Die Checkliste unten sagt dem
-Spiel-Agenten genau, was er prüfen soll.
+**Stand (15.10. abends):** Im Spiel getestet: beide Karten erscheinen in der
+Kartenauswahl und laden, Einleitungstext, Wellen-Countdown und Wellen-Meldungen laufen. Zwei
+Fehler gefunden und offline behoben: (1) die Einheitengruppen-Nummern waren um 3 verschoben
+(man verlor nach 30 s), jetzt fest auf den im Spiel bestätigten Wert; (2) die Wellen erschienen
+nicht, weil sie „neben dem Stadtzentrum des Computers“ erzeugt wurden. Das nutzt keine
+Originalkarte, und der Computer hatte zu dem Zeitpunkt nichts mehr. Jetzt erscheinen die Wellen
+wie in den Originalkarten in einem festen Gebiet (Kartenmitte) und laufen zu euren
+Stadtzentren; der Computer wird nur noch über genaue Einheitentypen angesprochen. **Diese
+neue Fassung ist offline geprüft, aber noch nicht im Spiel getestet.** Dafür gibt es eine
+Diagnosekarte „(4) Survival Probe“, die jede Trigger-Aktion einzeln vorführt (Abschnitt 5a).
 
 ---
 
@@ -50,22 +56,25 @@ trigger chunk, the names and the map id change; every other chunk stays byte-ide
 * **Players.** Trigger player groups: humans = "all humans" (enum 3), enemy = "all computer
   players" (enum 4). The mode does not care which lobby slot the computer gets.
 * **Start (t = 1 s).** Humans allied with each other and enemies of the computers (mutual).
-  The computer's own AI is switched off (AIToggleSetting 0), its start army, hero and citizens
-  are removed, its town centre made invulnerable, its gold and wood set to 0. A looping trigger
-  repeats the removal of citizens, the 0 resources and the invulnerability every 20 s.
-  Intro text (20 s) and an on-screen countdown to wave 1.
+  The computer's own AI is switched off (AIToggleSetting 0; `--keep-ai` leaves it on), its
+  citizens are removed (one object per citizen unit type), its town centre made invulnerable,
+  its gold and wood set to 0. A looping trigger repeats this every 20 s. Intro text (20 s) and
+  an on-screen countdown to wave 1.
 * **Waves.** Wave k fires when the scenario clock passes its time (GameHasAttribute "game
-  time > t", one non-looping trigger per wave). Units are created within line of sight of the
-  computer's town centre, set to aggressive and ordered to attack-move to the human town
-  centres. The countdown is reset to the next wave. Every 8 s, enemy units that stand idle are
-  sent again.
+  time > t", one non-looping trigger per wave). Units are created for "all computer players"
+  inside a 10x10 area at the map centre (the same "inside area" encoding as all 211 Create
+  effects in the shipped scenarios; the centre is equally far from every start corner of the
+  symmetric Plains map), set to aggressive and ordered to attack-move to the human town
+  centres. Enemy units are addressed by exact unit type, never by unit set. The countdown is
+  reset to the next wave. Every 15 s all enemy units are sent again (`--spawn near` restores
+  the old placement next to the computer's town centre, which failed in game).
 * **Co-op bonus.** A second trigger per wave adds 50 % (separate units) when at least two human
   town centres exist. Solo play therefore gets 2/3 of the 2-player wave.
 * **Bosses.** Waves 5/10/15/20 add hero units (RTS-mode hero records) and switch on the
   computer's hero bot AI so they use their powers. Optional `--boss-buffs`: +50/100/150/200 %
   hit points on the boss class.
-* **Win.** 10 s after the last wave, when no enemy army unit and no enemy hero is left for 2 s:
-  victory for all humans, then defeat for the computers.
+* **Win.** 10 s after the last wave, when no unit of any wave unit type (roster and bosses) is
+  left for 2 s: victory for all humans, then defeat for the computers.
 * **Lose.** No human town centre for 3 s (after the first 30 s): defeat for all humans.
   (Not "heroes": hero death is not a lose condition, heroes can be revived.)
 * **Unchanged:** economy, the humans' start, tech, standard diplomacy UI.
@@ -131,8 +140,9 @@ Writes `Data\scenarios\(4) survival.scn`, `Data\scenarios\(4) survival zombies.s
 matching `Data\map scripts\*.rmv`. Install = copy `work\overlay-survival\Data` over the working
 install's `Data` (new files only, nothing is overwritten). Both players need identical files.
 Flags: `--theme classic|zombie|all`, `--template "(4) plains"`, experimental `--boss-buffs`,
-`--zombie-buffs` (both off by default until their probe passes); `--no-diplomacy` drops the start
-diplomacy; `--unitset-base 134` (fallback, probe 4); `--test-schedule` (live testing only).
+`--zombie-buffs` (both off by default until their in-game test passes); `--no-diplomacy` drops the start
+diplomacy; `--unitset-base` (default 134, confirmed in game); `--spawn area|near`; `--keep-ai`;
+`--test-schedule` and `--probe` (in-game testing only).
 
 Lobby: in-game testing showed that the skirmish and LAN lobbies
 only offer scenario maps from a .scn list, so both modes live where players already pick maps.
@@ -155,7 +165,33 @@ pacing, Minotaur bosses, own texts, separate lobby entry for a Halloween release
 | zombie look | missing: tinted/rotting textures (HD texture pipeline could produce a green/grey variant as new .sst + .udf), groans/footstep sounds (new .sdf/.wav), no new unit records yet |
 | boss | Minotaur gladiator (RTS mode record). A bespoke zombie boss would need its own model/texture. |
 
-## 5. Not verified (in-game tests)
+## 5a. In-game results 2026-10-15 & the fix
+
+| build | result | cause (offline analysis) |
+|---|---|---|
+| default (`--unitset-base 137`) | maps listed and load, intro and countdown OK, **defeat ~30 s** | "human town centres" selection empty: unit-set class offset is 134, not 137 (all campaign files use 134) |
+| `--unitset-base 134` | no early defeat, countdown chains to wave 2, **no wave units**, computer has nothing on the revealed minimap | waves were placed "near the computer's town centre": no shipped scenario ever places units that way, and the unit-set based start clean-up ("A-All Units (Non-buildings...)") evidently also removed the town centre, so there was no anchor |
+| current (`ced74ae8` classic, `1db03574` zombies) | not yet run | spawn "inside area" at the map centre (shipped encoding), unit-set base 134, enemy addressed by exact unit types, start clean-up only removes the 4 citizen types |
+
+### Probe map
+
+`python tools/build_survival.py <game> <scratch overlay> --probe` writes
+`(4) survival probe.scn`: solo + 1 computer, watch chat and the map centre (reveal map).
+
+| time | chat | pass reading | if it fails |
+|---:|---|---|---|
+| 5 s | P1 human: L1 sword at map centre | your own swordsman at the centre | Create/area encoding broken at all |
+| 10 s | all computers: L1 spear | enemy spearman at the centre | player group 4 does not create |
+| 15-25 s | slot 2/3/4: archer / cavalry / L3 spear | one of them appears = the computer's slot | (informational) |
+| 30 s | all computers: L3 sword next to their TC | appears near the computer TC | near placement broken (known) |
+| 35 s | 3 elephants at centre | 3 enemy elephants | counts broken |
+| 40 s | enemy town centre selection FOUND / EMPTY | FOUND | unit set or TC removed |
+| 45 s | computer owns type N (...) | one line per created type | type selections broken |
+| 50 s | ordered to attack-move | enemy units walk to your TC | TaskToObject broken |
+| 55-60 s | AI off; L5 swords at centre | 2 more enemy swordsmen | AI-off blocks creation |
+| 120 s | victory in 3 s | victory screen | Victory(3) broken |
+
+## 5. In-game tests for the full maps
 
 Run each with the overlay installed in the working install. "Expect" is the pass reading; the
 failure line says what it means.
@@ -170,12 +206,9 @@ failure line says what it means.
 3. **Computer neutralised.** At 0:10 look at the computer's start (reveal map or follow its
    colour). Expect: town centre only, no citizens, TC takes no damage. Failure: citizens remain
    → RemoveUnit/unit set wrong; AI keeps building → AIToggleSetting 0 is not "AI off".
-4. **Wave 1 at 4:00.** Expect message "Wave 1 of 20 is coming!", warning bell, 4 Persian L1
-   infantry appear next to the computer's town centre and walk to your town centre.
-   Failure: no units → Create with player 4 or near-object placement fails (the spawn objects
-   are placed "near" the selection "SV Enemy town centres", which uses a unit set); units
-   stand → TaskToObject or the unit-set selection fails. For both, rebuild once with
-   `--unitset-base 134` (the other candidate offset, scenario-format.md 3.5) and repeat.
+4. **Wave 1 at 4:00** (0:30 with `--test-schedule`). Expect message "Wave 1 of 20 is
+   coming!", warning bell, 4 Persian L1 infantry appear at the map centre and walk to your
+   town centre. Failure: run the probe map (5a) to see which step breaks.
 5. **Countdown chain.** After wave 1 the counter reads "Wave 2 in : 2:29". Pass if it counts
    down to the next wave.
 6. **Co-op bonus.** With 2 humans (LAN), wave 1 brings 6 units (4 + 2). Solo brings 4.
@@ -197,8 +230,8 @@ failure line says what it means.
 ## 6. Limits of the design
 
 * Waves are on a fixed clock, not "next wave when cleared": unkilled enemies stack up.
-* The enemy spawns only at the computer's town centre; on Plains that is one corner, so the
-  attack direction depends on the lobby start positions.
+* The enemy spawns at the map centre (10x10 tiles, a fixed place); the computer's own corner
+  stays empty. Terrain at the centre of Plains is not checked for passability (probe map).
 * Pop cap of the computer is not raised; if creation hits a cap, waves shrink (probe 4/7).
 * Two or more computers multiply every wave (each gets a copy).
 * Texts are English; the lobby name/help comes from the .rmv `DisplayHelp` (unverified).

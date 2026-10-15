@@ -140,6 +140,9 @@ def check_refs(m, label, base_trig):
         if o['ub8']:
             check(o['u90'] >= 1, label + ': near object set')
         check(o['bdd'] == 1 or o['bdc'] == 1, label + ': dynamic object must have bdd=1')
+        if R.T(o['name']).startswith('SV W'):
+            check(o['ub4'] == 1 and o['u88'] >= 2 and not o['ub8'],
+                  label + ': wave spawn must use the shipped "inside area" encoding')
     for kind, items, key in (('trigger', m.triggers, 'u88'), ('condition', m.conditions, 'c_unused38'),
                              ('effect', m.effects, 'e_unused38'), ('object', m.objects, 'ub0'),
                              ('area', m.areas, 'u74')):
@@ -226,6 +229,8 @@ def stub_run(m, vocab, scenario, t_end=4000.0, label=''):
     def select(o, t):
         if o['u80'] == tc_set and o['player'] == B.PLAYER_ALL_HUMANS:
             return w.human_tcs
+        if o['player'] == B.PLAYER_ALL_CPUS and o['u84'] and not o['u80']:
+            return sum(1 for u in w.enemy if u[3] and u[1] == o['u84'])
         if o['player'] == B.PLAYER_ALL_CPUS and o['u80'] in (army_set, hero_set):
             want_hero = o['u80'] == hero_set
             n = [u for u in w.enemy if u[3] and (u[2] == 'hero') == want_hero]
@@ -366,9 +371,12 @@ def negative_tests(game, vocab, template_m):
     class Opts:
         boss_buffs = zombie_buffs = False
         force_diplomacy = True
+        ai_off = True
+        spawn = 'area'
 
-    m0 = R.Manager.parse(R.load_any(Path(game) / 'Data' / 'scenarios' / '(4) plains.scn').get(6))
-    B.build_mode(m0, theme, vocab, Opts)
+    tf = R.load_any(Path(game) / 'Data' / 'scenarios' / '(4) plains.scn')
+    m0 = R.Manager.parse(tf.get(6))
+    B.build_mode(m0, theme, vocab, Opts, struct.unpack_from('<II', tf.get(4), 0))
     base = len(template_m.triggers)
     names = [R.T(t['name']) for t in m0.triggers]
 
@@ -476,6 +484,15 @@ def main(argv):
                     label, len(m.triggers), len(m.conditions), len(m.effects), len(m.objects),
                     hashlib.sha256(d1).hexdigest()[:12]))
                 run_stub_suite(m, vocab, theme, len(template_m.triggers), label)
+    print('6b. probe map (structure and references only)')
+    with tempfile.TemporaryDirectory() as a:
+        B.main([str(game), a, '--probe'])
+        rel = Path('Data') / 'scenarios' / '(4) survival probe.scn'
+        d = (Path(a) / rel).read_bytes()
+        f = R.ScnFile(d)
+        m, h = check_file(d, f.get(6), template, 'probe')
+        check_refs(m, 'probe', len(template_m.triggers))
+        print('  probe: %d triggers, sha256 %s' % (len(m.triggers), hashlib.sha256(d).hexdigest()[:12]))
     print('7. negative tests (each mutation must be caught)')
     negative_tests(game, vocab, template_m)
     print('FAILED: %d' % len(FAILS) if FAILS else 'ALL CHECKS PASSED')
