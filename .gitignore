@@ -11,3 +11,6 @@ __pycache__/
 
 # build outputs derived from game files (tools/build_ai.py build)
 ai/unit ai scripts/
+
+# installer output (tools/build_installer.py)
+dist/
