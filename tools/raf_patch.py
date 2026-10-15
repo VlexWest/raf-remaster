@@ -401,8 +401,9 @@ class Overlay:
             return self.mapping()
         keep = set(_manifest_hashes(self.select)) if self.select else None
         out = {}
-        for f in sorted((self.root / "Data").rglob("*")):
-            if f.is_file():
+        # Data/ tree plus game-root files (e.g. Language.dll); manifests and docs are not game files
+        for f in sorted(self.root.rglob("*")):
+            if f.is_file() and f.suffix.lower() not in (".json", ".md", ".txt", ".log")                     and (f.parent == self.root or f.relative_to(self.root).parts[0] == "Data"):
                 rel = f.relative_to(self.root).as_posix()
                 if keep is None or rel.lower() in keep:
                     out[rel] = f
@@ -452,7 +453,8 @@ OVERLAYS = {
     "maps": Overlay("maps", REPO / "rms", lambda st: [PY, "tools/gen_rms.py"], mapping=_map_files),
     # built by other tools; installed only when present (docs/survival.md, docs/language.md)
     "survival": Overlay("survival", WORK / "overlay-survival", None, manifest=WORK / "overlay-survival" / "manifest.json"),
-    "lang-en": Overlay("lang-en", WORK / "overlay-lang-en", None, manifest=WORK / "overlay-lang-en" / "manifest.json"),
+    "lang-en": Overlay("lang-en", WORK / "overlay-lang-en",
+                       lambda st: [PY, "tools/build_language.py", st, WORK / "overlay-lang-en"]),
 }
 MUTATOR_DIR = WORK / "overlay-mutators"  # one sub folder per mutator (docs/mutators.md); at most one active
 
@@ -488,7 +490,7 @@ ULTRA.update({"Graphics Settings/Flora Quality": 3,
               "Render Reflections": 1, "Flora Enabled": 1})
 OVERLAY_ORDER = list(OVERLAYS)  # dict order = install priority; the mutator goes last
 # Files that decide the simulation; all players must match (REMASTER.txt fingerprint).
-GAMEPLAY_DIRS = ["Data/db", "Data/random map scripts", "Data/unit ai scripts"]
+GAMEPLAY_DIRS = ["Data/db", "Data/random map scripts", "Data/unit ai scripts"]  # language stays out
 
 
 def default_stock(game: Path) -> Path:
