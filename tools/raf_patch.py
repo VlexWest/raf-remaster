@@ -128,6 +128,14 @@ CMDLINE_FIX = [
      "no UIManager write in the early command line pass"),
 ]
 
+# Always applied: the resolution list (startup, FUN_0071fxxx) drops every mode with
+# width x height x bytes x 3 above the rasterizer's free video memory. Under DXVK that value
+# shrinks once textures are loaded, so the options menu offered at most 1680x720 and "apply"
+# switched a 3440x1440 player down to it. The memory test is skipped.
+MODE_LIST_FIX = [
+    (EXE, 0x0072013C, "741d", "eb1d", "no video memory test for display modes"),
+]
+
 # Addresses are for the v1.15 (08.18.2006) files; every patch checks the original bytes first.
 BORDERLESS = [
     # DX9Screen::Capture, fullscreen branch: D3DPRESENT_PARAMETERS.Windowed = ebp (0) -> eax (the
@@ -708,6 +716,7 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     print("intro movies: removed")
 
     byte_patches(game, CMDLINE_FIX, True, "host/join command line fix")
+    byte_patches(game, MODE_LIST_FIX, True, "resolution list fix")
     byte_patches(game, OPENSPY, "openspy" in feats, "openspy")
     byte_patches(game, AI_CIV_GATE, "ai-personalities" in feats, "ai civ gate")
     byte_patches(game, BORDERLESS, borderless, "borderless")
