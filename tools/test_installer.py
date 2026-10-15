@@ -2,7 +2,9 @@
 
     python tools/test_installer.py
 
-Covers: stock checks (wrong exe, remaster folder, missing/changed/extra gameplay files), target path
+Covers: texts (all keys in de/ru/en, same placeholders, Cyrillic, umlauts), the DXVK verdict from
+Vulkan probe results (Vulkan 1.2, old driver, CPU-only, no loader, no 32-bit loader, two GPUs), the
+native path (only d3d9.dll + dxvk.conf removed), stock checks (wrong exe, remaster folder, missing/changed/extra gameplay files), target path
 rules, the failure path (half-made copy removed, original untouched), the HD fallback, the in-process
 builder runner (exit codes) and the generated Deinstallieren.bat (registry restore lines, quoting).
 """
@@ -16,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import raf_installer as ri  # noqa: E402
+import raf_installer_text as rt  # noqa: E402
 
 FAILS = []
 
@@ -40,10 +43,55 @@ def fake_stock(root: Path) -> dict:
     stock = {rel: h(d) for rel, d in files.items() if not rel.endswith((".lcl", ".dds")) and rel != "unins000.exe"}
     return {"stock": stock, "game_version": "v1.15 (test)", "gameplay_dirs": ["Data/db", "Data/scenarios"],
             "extra_bytes": 0, "extra_bytes_hd": 0, "features": ["mips", "hd-terrain", "hd-units", "ai-hard"],
-            "labels": {}, "zoom": 2.0, "fingerprint": "x", "remaster_version": "1.0", "local_modules": []}
+            "zoom": 2.0, "fingerprint": "x", "remaster_version": "1.0", "local_modules": []}
+
+
+def check_texts():
+    import string as _s
+
+    def fields(t):
+        return tuple(sorted(f for _, f, _, _ in _s.Formatter().parse(t) if f))
+
+    bad = [k for k, v in rt.TEXT.items() if set(v) != set(rt.LANGS) or len({fields(x) for x in v.values()}) != 1]
+    check(not bad, f"every text in de/ru/en with the same placeholders {bad or ''}")
+    latin_ok = {"ok", "un_keys", "f_shaders"}
+    not_cyr = [k for k, v in rt.TEXT.items()
+               if k not in latin_ok and not any("Ѐ" <= c <= "ӿ" for c in v["ru"])]
+    check(not not_cyr, f"Russian texts are Cyrillic {not_cyr or ''}")
+    check(any(c in "äöüß" for v in rt.TEXT.values() for c in v["de"]), "German texts carry umlauts")
+
+
+def check_verdict():
+    def gpu(name, api, typ="discrete", missing=(), push=256):
+        return {"name": name, "api": api, "type": typ, "missing": list(missing), "push": push,
+                "descriptor_heap": False}
+
+    base = {"loader": True, "loader32": True, "instance_api": "1.4.309"}
+    v = ri.dxvk_verdict(dict(base, devices=[gpu("RX 6800 XT", "1.4.315")]))
+    check(v["dxvk"] and v["hd"], "verdict: Vulkan 1.4 GPU with all extensions -> DXVK")
+    v = ri.dxvk_verdict(dict(base, devices=[gpu("GTX 780", "1.2.175")]))
+    check(not v["dxvk"] and v["hd"] and "Vulkan 1.2" in v["reason"], "verdict: Vulkan 1.2 GPU -> native, HD possible")
+    v = ri.dxvk_verdict(dict(base, devices=[gpu("GTX 1060", "1.3.242", missing=["VK_KHR_maintenance6"])]))
+    check(not v["dxvk"] and "maintenance6" in v["reason"], "verdict: missing maintenance6 (old driver) -> native")
+    v = ri.dxvk_verdict(dict(base, devices=[gpu("llvmpipe", "1.4.0", "cpu")]))
+    check(not v["dxvk"] and not v["hd"], "verdict: CPU-only Vulkan -> native, no HD")
+    v = ri.dxvk_verdict({"loader": False, "devices": []})
+    check(not v["dxvk"] and not v["hd"], "verdict: no Vulkan loader -> native, no HD")
+    v = ri.dxvk_verdict(dict(base, loader32=False, devices=[gpu("RX 6800 XT", "1.4.315")]))
+    check(not v["dxvk"] and "32-bit" in v["reason"], "verdict: no 32-bit loader -> native")
+    v = ri.dxvk_verdict(dict(base, instance_api="1.2.0", devices=[gpu("RX 6800 XT", "1.4.315")]))
+    check(not v["dxvk"], "verdict: old Vulkan loader -> native")
+    v = ri.dxvk_verdict(dict(base, devices=[gpu("UHD 620", "1.3.0", "integrated", missing=["VK_KHR_maintenance5"]),
+                                            gpu("RTX 3060", "1.4.303")]))
+    check(v["dxvk"] and v["name"] == "RTX 3060", "verdict: one compatible GPU of two is enough")
+    v = ri.dxvk_verdict(dict(base, devices=[gpu("odd", "1.3.0", push=128)]))
+    check(not v["dxvk"], "verdict: push constants below 256 -> native")
 
 
 def main():
+    rt.set_lang("de")
+    check_texts()
+    check_verdict()
     tmp = Path(tempfile.mkdtemp(prefix="raf-inst-test-"))
     try:
         src = tmp / "Rise and Fall"
@@ -174,6 +222,33 @@ def main():
         check('/v "Install Directory" /t REG_SZ /d "D:\\Games\\Rise and Fall\\\\" /f' in bat,
               "bat restores Install Directory (trailing backslash doubled for reg.exe)")
         check(bat.index(":running") > bat.index("rd /s /q \"D:\\G\\Rise and Fall Remaster\""), "folder removal is the last step")
+        rt.set_lang("ru")
+        bat_ru = ri.uninstall_bat(Path(r"D:\G\Rise and Fall Remaster"), r"Software\T\Rise and Fall", saved, None,
+                                  [], None, r"Software\T\Uninstall\RaF-Remaster")
+        check(bat_ru.startswith("@echo off\nchcp 65001") and "Удалить? Y = да, N = нет" in bat_ru
+              and "choice /c YN" in bat_ru, "Russian Uninstall.bat: UTF-8 code page, Cyrillic text, Y/N keys")
+        rt.set_lang("de")
+
+        # -- native path: no Vulkan 1.3 -> DXVK files removed after apply, state records it
+        def fake_apply(game, **k):
+            for n in ("d3d9.dll", "dxvk.conf", "RiseAndFall.exe"):
+                (game / n).write_bytes(b"x")
+            (game / ".raf-remaster" / "state.json").write_text('{"fingerprint": "abc", "features": ["zoom"]}')
+
+        for flag in (False, True):
+            d = tmp / f"dxvk-{flag}"
+            (d / ".raf-remaster").mkdir(parents=True)
+            x = ins(d, dxvk=flag)
+            x.rp = types.SimpleNamespace(apply=fake_apply)
+            x.apply(["zoom"])
+            has = (d / "d3d9.dll").exists() and (d / "dxvk.conf").exists()
+            state = (d / ".raf-remaster" / "state.json").read_text()
+            if flag:
+                check(has and x.result["dxvk"] is True, "DXVK path keeps d3d9.dll + dxvk.conf")
+            else:
+                check(not has and (d / "RiseAndFall.exe").exists() and x.result["dxvk"] is False
+                      and '"dxvk": false' in state and x.result["fingerprint"] == "abc",
+                      "native path removes only d3d9.dll + dxvk.conf, fingerprint untouched")
         try:
             ri.uninstall_bat(Path(r"D:\100%\x"), "k", {}, None, [], None, "u")
             check(False, "bat refuses % in paths")

@@ -43,11 +43,7 @@ import raf_patch as rp  # noqa: E402
 # fingerprint matches.
 FEATURES = [f for f, on in rp.FEATURES.items() if on or f == "zoom-setting"]
 ZOOM = 2.0
-GAME_VERSION = "v1.15 (russisch)"
-LABELS = {"mips": "Mipmaps", "hd-terrain": "HD-Geländetexturen (Grafikkarte)",
-          "hd-units": "HD-Einheitentexturen (Grafikkarte)", "shaders": "Shader", "ai-hard": "KI Schwer",
-          "ai-personalities": "KI-Persönlichkeiten", "unit-ai": "Einheiten-KI", "unit-limit": "Einheitenlimit",
-          "survival": "Survival-Karten", "coop-modes": "Koop-Karten", "zoom-setting": "Zoom-Regler"}
+GAME_VERSION = "v1.15"
 
 ENTRY_MODULES = ["raf_patch", "raf_credits", "zoom_setting", "build_language", "build_textures", "build_shaders",
                  "build_ai_db", "build_ai", "build_survival", "build_unitlimit", "build_coop"]
@@ -198,12 +194,13 @@ def make_bundle(stock: Path):
         "(realesrgan-ncnn-vulkan-20220424-windows.zip), under the Visual Studio redistribution terms.\n",
         encoding="utf-8")
     third_party_licenses(lic)
-    shutil.copy2(REPO / "installer" / "README.txt", BUNDLE / "README.txt")
+    for lang in ("DE", "RU", "EN"):
+        shutil.copy2(REPO / "installer" / f"README_{lang}.txt", BUNDLE / f"README_{lang}.txt")
     stock_map = stock_hashes(stock)
     fp = expected_fingerprint(stock)
     cfg = {"remaster_version": rp.REMASTER_VERSION, "game_version": GAME_VERSION, "features": FEATURES,
            "zoom": ZOOM, "fingerprint": fp, "gameplay_dirs": rp.GAMEPLAY_DIRS, "stock": stock_map,
-           "labels": LABELS, "local_modules": local, "extra_bytes": EXTRA_BYTES, "extra_bytes_hd": EXTRA_BYTES_HD}
+           "local_modules": local, "extra_bytes": EXTRA_BYTES, "extra_bytes_hd": EXTRA_BYTES_HD}
     (BUNDLE / "installer.json").write_text(json.dumps(cfg, indent=1, ensure_ascii=False), encoding="utf-8")
     print(f"bundle: {len(local)} modules, {len(external)} external imports, {len(stock_map)} stock hashes, "
           f"expected fingerprint {fp}")
@@ -220,7 +217,9 @@ def pyinstaller(external):
            "--exclude-module", "matplotlib", "--exclude-module", "scipy",
            *hidden, str(TOOLS / "raf_installer.py")]
     subprocess.run(cmd, check=True, cwd=REPO)
-    shutil.copy2(BUNDLE / "README.txt", DIST / "README.txt")
+    (DIST / "README.txt").unlink(missing_ok=True)  # single German README of the first build
+    for lang in ("DE", "RU", "EN"):
+        shutil.copy2(BUNDLE / f"README_{lang}.txt", DIST / f"README_{lang}.txt")
     shutil.rmtree(DIST / "licenses", ignore_errors=True)
     shutil.copytree(BUNDLE / "licenses", DIST / "licenses")
 

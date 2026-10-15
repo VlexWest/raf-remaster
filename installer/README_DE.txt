@@ -22,19 +22,24 @@ Netzwerkspiel
 
 Deinstallieren
 - Startmenü "Rise and Fall Remaster deinstallieren", Windows-Einstellungen > Apps, oder
-  Deinstallieren.bat im Remaster-Ordner. Das löscht den Remaster-Ordner, die Verknüpfungen
+  Uninstall.bat im Remaster-Ordner. Das löscht den Remaster-Ordner, die Verknüpfungen
   und setzt die Registry-Werte zurück, die der Installer geändert hat.
 - Hinweis: Original und Remaster teilen sich die Spieleinstellungen in der Registry
   (Auflösung, Grafik). Das Original übernimmt sie daher, solange das Remaster installiert ist.
+
+Grafikkarte
+- Das Remaster nutzt DXVK 3.1.1 (Direct3D 9 über Vulkan). DXVK braucht Vulkan 1.3 und einige
+  neuere Treiber-Erweiterungen (u. a. VK_KHR_maintenance6), also eine aktuelle Grafikkarte mit
+  aktuellem Treiber. Der Installer prüft das. Fehlt es, läuft das Spiel mit dem normalen
+  Direct3D 9 von Windows (ohne d3d9.dll und dxvk.conf im Spielordner). Ein Treiber-Update und
+  eine neue Installation holen DXVK nach.
+- Startet das Spiel mit DXVK nicht, d3d9.dll und dxvk.conf im Remaster-Ordner löschen.
 
 Fehler
 - Das Protokoll steht in %TEMP%\RaF-Remaster-Setup.log.
 
 Lizenzen
-- Remaster-Code: MIT (LICENSE.txt). Mitgelieferte Programme und ihre Lizenzen:
-  Ordner "licenses" bzw. "Remaster-Lizenzen" im Spielordner (DXVK, texconv/DirectXTex,
+- Remaster-Code: MIT (RaF-Remaster-MIT.txt). Mitgelieferte Programme und ihre Lizenzen:
+  Ordner "licenses" bzw. "Remaster-Licenses" im Spielordner (DXVK, texconv/DirectXTex,
   Real-ESRGAN ncnn Vulkan + Modell, ncnn, Python, NumPy, Pillow, pefile, Tcl/Tk,
   PyInstaller).
-
-English: copies your own Rise and Fall (Russian v1.15) to a new folder and builds the
-remaster there from your own game files. Contains no game files.
