@@ -19,7 +19,7 @@ CREDITS_FIRST_ID = 14013
 MENU_TITLE_ID = 7698     # free in stock + lang-en (block 482; zoom-setting uses 7696/7697/7709/7710)
 MENU_SUB_ID = 7699
 MENU_TITLE = "RISE AND FALL REMASTER"      # ROMIC.ttf (the menu button font): no '/' and no middle dot
-MENU_SUB = f"by {AUTHOR}  \u00b7  {LINK}"   # Georgia has both
+MENU_SUB = f"BY {AUTHOR}  \u00b7  {LINK}".upper()  # Georgia Bold has both
 
 
 def credit_line(version: str) -> str:
@@ -74,16 +74,17 @@ MENU_XML = "Data/user interface/main menu screen.xml"
 # onto the form's 1600 x 1200 design space (its parchment bar = button rects 1100-1150): stone band
 # 988-1046, meander 1052-1100. Live 2026-10-15 at 3440x1440: the first try (1066-1092) sat on the
 # meander strip. Title in the bar buttons' font (ROMIC, StringID 6, as their Value 47 / Bold /
-# Shadow), sub line in Georgia (StringID 5, Value 80 as the stock civ transition labels).
+# Shadow), sub line in Georgia Bold capitals (StringID 5, Value 80 as the stock civ transition
+# labels; live: regular Georgia in mixed case looked thin next to the ROMIC title).
 # Both overlap the stock copyright label (FormIndex 8, 995-1050), which is never kept on screen
 # (not AlwaysDirty) and keeps its stock text when menu-credit is on.
 GOLD = (228, 194, 128)    # meander gold of the frame texture, a little darker
-PARCH = (196, 180, 146)
+GOLD_DIM = (206, 176, 118)  # sub line: same gold, a little dimmer
 MENU_LABELS = [  # FormIndex, control Value, (left, right, top, bottom), ControlFont attributes, colour, string id
     (16, 3390, (1100, 1555, 993, 1015),
      'StringID="6" Value="47" Quality="High" PointSize="36" Bold="True" Shadow="True"', GOLD, MENU_TITLE_ID),
-    (17, 3391, (1100, 1555, 1018, 1036),
-     'StringID="5" Value="80" Quality="High" PointSize="26" Shadow="True"', PARCH, MENU_SUB_ID),
+    (17, 3391, (1100, 1555, 1018, 1039),
+     'StringID="5" Value="80" Quality="High" PointSize="26" Bold="True" Shadow="True"', GOLD_DIM, MENU_SUB_ID),
 ]
 # Why the stock copyright label (FormIndex 8) never showed, even when moved: LowLevelEngine
 # UIControl::CopyData (0x100b8820) clears a control's dirty flag after one draw unless it is

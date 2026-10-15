@@ -175,9 +175,9 @@ def language_checks(tmp: Path):
     menu_ids = {rc.MENU_TITLE_ID: rc.MENU_TITLE, rc.MENU_SUB_ID: rc.MENU_SUB}
     check("menu string ids not used by zoom-setting or map texts", not set(menu_ids) & others)
     check("menu texts", rc.MENU_TITLE == "RISE AND FALL REMASTER"
-          and rc.MENU_SUB == "by Alexander West  \u00b7  thewest.cc/raf", (rc.MENU_TITLE, rc.MENU_SUB))
+          and rc.MENU_SUB == "BY ALEXANDER WEST  \u00b7  THEWEST.CC/RAF", (rc.MENU_TITLE, rc.MENU_SUB))
     from fontTools.ttLib import TTFont
-    for sid, path in ((rc.MENU_TITLE_ID, GAME / "ROMIC.ttf"), (rc.MENU_SUB_ID, Path("C:/Windows/Fonts/georgia.ttf"))):
+    for sid, path in ((rc.MENU_TITLE_ID, GAME / "ROMIC.ttf"), (rc.MENU_SUB_ID, Path("C:/Windows/Fonts/georgiab.ttf"))):
         if path.exists():
             cmap = TTFont(str(path)).getBestCmap()
             miss = [ch for ch in menu_ids[sid] if ord(ch) not in cmap]
@@ -303,7 +303,7 @@ def menu_mock():
     tex = Image.open(GAME / "Data/textures/3DU_yMain_Backdrop.dds").convert("RGB").crop((0, 0, 1600, 1200))
     bg = tex.resize((W, H), Image.LANCZOS)
     d = ImageDraw.Draw(bg)
-    paths = {"6": GAME / "ROMIC.ttf", "5": Path("C:/Windows/Fonts/georgia.ttf")}
+    paths = {"6": GAME / "ROMIC.ttf", "5": Path("C:/Windows/Fonts/georgiab.ttf")}  # both labels bold
 
     def font(sid, units):
         t = TTFont(str(paths[sid]))
@@ -320,7 +320,7 @@ def menu_mock():
     for (fi, value, (l, r, t, b), fattr, col, sid) in rc.MENU_LABELS:
         fs = re.search(r'StringID="(\d+)"', fattr).group(1)
         f = font(fs, b - t)
-        sw = 1 if 'Bold="True"' in fattr else 0
+        sw = 1 if 'Bold="True"' in fattr and fs == "6" else 0  # ROMIC has no bold face: GDI emboldens
         x, y = r * sx, (t + b) / 2 * sy
         s = {rc.MENU_TITLE_ID: rc.MENU_TITLE, rc.MENU_SUB_ID: rc.MENU_SUB}[sid]
         d.text((x + 2, y + 2), s, font=f, fill=(0, 0, 0), anchor="rm", stroke_width=sw, stroke_fill=(0, 0, 0))
