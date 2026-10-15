@@ -594,7 +594,7 @@ FEATURES = {
     "coop-modes": True,  # five co-op maps (docs/coop-modes.md); in-game tests pending
     "lang-en": False,
     "credits": True,
-    "menu-credit": False,  # main menu line + loading screen bar (raf_credits); off until tested in game
+    "menu-credit": True,  # main menu credit lines + loading screen bar; live-checked 2026-10-15
     "openspy": False,
     "click-fix": True,  # Resume a suspended mouse/keyboard each frame; live-tested 2026-10-15
 }
