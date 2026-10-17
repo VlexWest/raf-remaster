@@ -293,6 +293,8 @@ TEXT = {
     "f_ai-personalities": {"de": "KI-Persönlichkeiten", "ru": "характеры ИИ", "en": "AI personalities"},
     "f_unit-ai": {"de": "Einheiten-KI", "ru": "ИИ юнитов", "en": "unit AI"},
     "f_unit-limit": {"de": "Einheitenlimit", "ru": "лимит юнитов", "en": "unit limit"},
+    "f_crossciv": {"de": "Ausbildung in fremden Kasernen", "ru": "найм в чужих казармах",
+                   "en": "training in foreign barracks"},
     "f_survival": {"de": "Survival-Karten", "ru": "карты Survival", "en": "survival maps"},
     "f_coop-modes": {"de": "Koop-Karten", "ru": "кооперативные карты", "en": "co-op maps"},
     "f_zoom-setting": {"de": "Zoom-Regler", "ru": "ползунок отдаления камеры", "en": "zoom slider"},

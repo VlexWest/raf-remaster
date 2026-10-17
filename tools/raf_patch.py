@@ -17,7 +17,7 @@ Features (see FEATURES; `features` prints them with their default):
                                        --zoom then sets the registry default "Remaster Camera Zoom"
   mips, hd-terrain, hd-units           texture overlays (hd wins over mips on shared files)
   shaders                              fx overlay (shader.cache is moved aside so the game rebuilds it)
-  ai-hard, ai-personalities, unit-ai, maps, survival, coop-modes
+  ai-hard, ai-personalities, unit-ai, maps, survival, coop-modes, crossciv
                                        gameplay data (all players need the same set: REMASTER.txt)
   lang-en                              English language pack (needs work/lang/en.json, not in the repo)
   credits, menu-credit                 credits roll, Language.dll lines, splash credit; menu-credit
@@ -560,6 +560,10 @@ OVERLAYS = {
     # lobby unit limit max 5000 -> 10000 (dbworld.dat record 26); every MP player needs it
     "unit-limit": Overlay("unit-limit", WORK / "overlay-unitlimit",
                           lambda st: [PY, "tools/build_unitlimit.py", st, WORK / "overlay-unitlimit", "--max", "10000"]),
+    # archers + spearmen of every civ train in the other civs' barracks / archery ranges
+    # (dbtechtree.dat, docs/crossciv.md); a mutator with its own dbtechtree.dat replaces it
+    "crossciv": Overlay("crossciv", WORK / "overlay-crossciv",
+                        lambda st: [PY, "tools/build_crossciv.py", st, WORK / "overlay-crossciv"]),
     # Options screen with the camera distance slider (+ view distance slider range 0..300); the
     # slider's strings go into the generated Language.dll of the "credits" overlay
     "zoom-setting": Overlay("zoom-setting", WORK / "overlay-zoom-setting",
@@ -591,6 +595,7 @@ FEATURES = {
     "ai-personalities": True,
     "unit-ai": True,
     "unit-limit": True,
+    "crossciv": True,  # foreign military buildings train your archers/spearmen; in-game test pending
     "maps": False,
     "survival": False,  # 20-wave classic & zombie maps; off: Survival Endless (coop-modes) replaces them
     "survival-probe": False,

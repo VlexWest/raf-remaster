@@ -55,7 +55,7 @@ ZOOM = 2.0
 GAME_VERSION = "v1.15"
 
 ENTRY_MODULES = ["raf_patch", "raf_credits", "zoom_setting", "build_language", "build_textures", "build_shaders",
-                 "build_ai_db", "build_ai", "build_survival", "build_unitlimit", "build_coop"]
+                 "build_ai_db", "build_ai", "build_survival", "build_unitlimit", "build_coop", "build_crossciv"]
 SKIP_IMPORTS = {"capstone", "unicorn"}  # zoom_setting.listing() only (developer disassembly)
 
 REDIST = {  # bundle path -> (source, sha256)

@@ -18,6 +18,7 @@ On a non-Russian install the new texts (co-op maps, menus) are English.
 - A harder Hard AI with its own personality per civilization
 - Smarter unit AI for artillery & transports
 - Unit limit raised to 10000
+- Archers & spearmen can be trained in the barracks & archery ranges of other civilizations
 - New co-op maps, including an endless Survival mode with siege waves in three difficulties
 - Fix for dead mouse clicks right after launch
 

@@ -182,7 +182,7 @@ named ones (they come from a physics sub-object and a virtual getter); open.
 | 0x90 | time_ms | likely build / research time (33000 for Spear Infantry L1, 45000 Town Center) |
 | 0xa4 | object_index | by value: index of the `dbobjects` record (998 for Spear Infantry L1 Rome) |
 | 0xb0 | string_id | by value: matches `Bad String(n)` in `string-graphic info.txt` |
-| list_a | u32 n + i32[n] | stored at node+0x10. Likely prerequisite / effect ids |
+| list_a | u32 n + i32[n] | stored at node+0x10. dbobjects ids of the buildings that produce the item (one cost entry each); see `docs/crossciv.md` |
 | list_b | u32 n + i32[n] | stored at node+0x38 |
 
 Root node layout = child layout; the root is preceded by its child count.
