@@ -78,7 +78,7 @@ Target selection (who `CanISeeEnemy` / `EnemyUnitSpotted` picks) is **not** in t
 - Families (`dbobjects` record 0x68 = def +0x220, `dbfamily.dat` index): siege 30 Ram, 31 Siege 333 (ballista, palintonos, onager, tower catapult, ladder unit), 57 Ladder Team, 62 Siege Tower, 63 Siege Building (siege under construction), 65 Naval Siege, 68 Entrenched Siege (unpacked siege towers); archers 29 Human Archer, 14 Mounted Archer (chariots, horse archers), 54 Cavalry Archer (no objects); hero 8.
 - Stance: unit +0x624 points into the `dbunitbehavior` vector `[0xD2F004]` (set by the EEMSetUnitBehavior handler `FUN_005d63e0`); index 2 is Guard (UI button control 0xe9, `FUN_00b77490`).
 
-**Feature `target-priority`** (exe patch, default off until tested live; `tools/raf_patch.py` `TARGET_PRIORITY`, generated and tested by `tools/test_target_priority.py`). For classes Short/Long only, all three scorers add a family tier bonus:
+**Feature `target-priority`** (exe patch, default on since 1.2.0, tested live; `tools/raf_patch.py` `TARGET_PRIORITY`, generated and tested by `tools/test_target_priority.py`). For classes Short/Long only, all three scorers add a family tier bonus:
 
 | | all candidates | in weapon range (total) | in range, attacker in Guard |
 |---|---|---|---|

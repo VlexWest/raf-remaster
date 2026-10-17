@@ -644,7 +644,7 @@ FEATURES = {
     "menu-credit": True,  # main menu credit lines + loading screen bar; live-checked 2026-10-15
     "openspy": False,
     "click-fix": True,  # Resume a suspended mouse/keyboard each frame; live-tested 2026-10-15
-    "target-priority": False,  # ranged units shoot siege/archers/heroes first (exe); off until tested in game
+    "target-priority": True,  # ranged units shoot siege/archers/heroes first (exe)
 }
 # The autodetect does not know the GPU and leaves every quality at 0 ("Низко"); 3 = "Ультра".
 # The shader upgrade only shows with the higher techniques.

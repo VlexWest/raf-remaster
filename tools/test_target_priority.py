@@ -642,7 +642,7 @@ def patcher_checks():
             check("foreign bytes at a hook site refused", False)
         except SystemExit:
             check("foreign bytes at a hook site refused", True)
-    check("feature registered, default off", rp.FEATURES.get("target-priority") is False)
+    check("feature registered, default on", rp.FEATURES.get("target-priority") is True)
     # fingerprint: unchanged while off (incl. other exe patches), marker mixed in while on
     with tempfile.TemporaryDirectory() as t:
         g = Path(t)
@@ -667,8 +667,7 @@ def patcher_checks():
         h.update(rp.TARGET_PRIORITY_MARK)
         check("fingerprint ON = file hash + TARGET_PRIORITY_MARK", h.hexdigest()[:12] == on)
     import build_installer as bi
-    check("installer expected fingerprint: marker only when the feature is in the release set",
-          "target-priority" not in bi.FEATURES)
+    check("installer release set contains the feature", "target-priority" in bi.FEATURES)
 
 
 STOCK = b""
