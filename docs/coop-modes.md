@@ -94,8 +94,12 @@ Lobby slot 1 (player enum 7) = **economist**, slot 2 (enum 8) = **commander**.
 | economist has all citizens | looping every 5 s: ChangeOwner of P2's citizens (4 citizen types) to P1 | yes, within 5 s; P2's own TC can still train citizens, they go to P1 (P2 pays) |
 | commander gets every soldier and hero | looping every 5 s: ChangeOwner of P1's units of 110 military types (Inf/Arc/Cav level 1-5 of the four civs, from dbobjects names) and the 13 RTS heroes to P2 | yes, within 5 s; P1 can still give orders in that window |
 | commander gets the military buildings | ChangeOwner of P1's barracks/stables/archery ranges (27 types) **only when finished and undamaged** (HP 100 %) | finished buildings yes; a damaged one waits for repair |
+| commander gets the glory statues | ChangeOwner of P1's "A - b  Statue Glory" (4 civs) **only when finished** (HP 100 %): statue glory is for the commander (hero levels, advisors) | finished statues yes; a building one waits for completion |
+| economist gets hero levels + unlimited glory | at 3 s: ModifyTechnology (as stock "P1 to Level 2": `u44`=2, `b48`=1) for P1 with the 9 techs `A - ACTION - LEVEL 02..10 (Epoch tech)` (6100, 7100, 8100, 9100, 10100-10104, one set for all civs), 0.5 s apart; max glory (res 59) = 99999; looping every 30 s: P1 glory (res 6) = 99999, so he buys advisors himself | techs 6100-10100 are used by stock effects, 10101-10104 and the effect without a living hero are unverified live |
 | commander builds no economy | P2 has no citizens, so he cannot build anything | yes |
 | tithe | every 30 s while P1 holds >= 300 gold: 100 gold P1 -> P2; while >= 800: another 200; same for wood | yes (fixed amounts; percentage transfers would need expression maths that the stock files never use) |
+| pop cap shared | pop cap is per player, so only P1 gains it from Granary/Market/Bazaar (Greek/Rome) or Altar/Church/Temple (Persia/Egypt). Looping every 5 s: ChangeResourceLevel P2 resource 8 (pop cap) = P1 pop cap, via a `/#PA<id>` token on a REF condition | yes if the engine does not recompute res 8 from buildings between ticks (unverified live); P1 >= P2 always (same start TC, P2 builds nothing), so setting never lowers P2 |
+| same civ warning | the lobby overwrites the header civ and no civ condition exists, so a mismatch is only detected: 12 triggers (one per ordered civ pair) at 8 s, each ObjectExists P1 start TC (`A - b  Town Center (MP) (<civ>)`: 149 Greek, 481 Egypt, 482 Persian, 483 Rome) AND ObjectExists P2 start TC of another civ -> red chat "use the same civ for both players; mixed civs can miss units", once | detection yes (offline stub); live unverified (start TC type per lobby civ) |
 | not covered | siege engines and ships (built as "buildings" by citizens or from docks) stay with P1; docks stay with P1; techs are per player (P2 must research in his buildings) | documented |
 
 * `(4) Co-op Roles`: against the Survival classic waves (first wave at 6:00 instead of 4:00),
@@ -121,7 +125,8 @@ Lobby slot 1 (player enum 7) = **economist**, slot 2 (enum 8) = **commander**.
 Skirmish (solo) or LAN lobby, map from the list above, humans in slots 1 and 2 on one team, the
 stated number of computers on another team, everything else empty. Waves and bosses come from
 "all computer players", so a second computer in Endless/Boss Hunt doubles every wave (as in
-Survival). Roles needs the humans exactly in slots 1 and 2 (slot 1 = economist).
+Survival). Roles needs the humans exactly in slots 1 and 2 (slot 1 = economist) and the same civ for both
+(P1 builds civ-specific buildings that go to P2; with different civs the game warns after 8 s).
 
 ## 4. Attack-move first leg (open issue from Survival)
 

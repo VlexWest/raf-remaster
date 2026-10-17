@@ -55,6 +55,7 @@ class World:
         self.res = defaultdict(lambda: defaultdict(int))
         self.tcs = {p: 1 for p in self.humans}
         self.chat = []
+        self.techs = []            # (player, tech id, time) from ModifyTechnology
         self.result = None
 
     def resolve(self, enum):
@@ -142,6 +143,10 @@ def stub_run(m, vocab, sc, t_end):
                 r = w.res[p]
                 r[e['resource']] = {0: v, 1: r[e['resource']] + v,
                                     2: r[e['resource']] - v}[e['amount']]
+        elif key == (2, 5):
+            assert e['u44'] == 2 and e['b48'] == 1, 'stub: ModifyTechnology as stock only'
+            for p in w.resolve(e['player']):
+                w.techs.append((p, e['tech'], t))
         elif key == (2, 0) and e['player'] == B.PLAYER_ALL_HUMANS:
             w.result = w.result or ('victory', t)
         elif key == (2, 2) and e['player'] == B.PLAYER_ALL_HUMANS:
@@ -308,6 +313,7 @@ def stub_bosshunt(m, vocab, info, label, theme):
 def stub_roles(m, vocab, info, label, theme, waves=True):
     mil = C.military_types(vocab)
     blds = C.building_types(vocab)
+    statue = next(i for i, n in enumerate(vocab.objects) if n == 'A - b  Statue Glory (Greek)')
     cit = vocab.set_members(vocab.unitset(B.UNITSETS['citizens']))['types']
     log = {}
 
@@ -315,6 +321,7 @@ def stub_roles(m, vocab, info, label, theme, waves=True):
         if t == 0.5:
             w.res[1][3] = w.res[1][4] = 200
             w.res[2][3] = w.res[2][4] = 0
+            w.res[1][8], w.res[2][8] = 50, 20
             for ut in cit[:2]:
                 w.units.append(dict(owner=2, type=ut, alive=True, hp=100, born=t))
         if 0 < t < 2000 and t % 1 == 0:
@@ -324,14 +331,23 @@ def stub_roles(m, vocab, info, label, theme, waves=True):
             w.units.append(dict(owner=1, type=mil[0], alive=True, hp=100, born=t, tag='p1sold'))
             w.units.append(dict(owner=1, type=blds[0], alive=True, hp=40, born=t, tag='found'))
             w.units.append(dict(owner=1, type=blds[1], alive=True, hp=100, born=t, tag='done'))
+            w.units.append(dict(owner=1, type=statue, alive=True, hp=100, born=t, tag='statue'))
             w.units.append(dict(owner=2, type=cit[0], alive=True, hp=100, born=t, tag='p2cit'))
         if t == 200:
             [u for u in w.units if u.get('tag') == 'found'][0]['hp'] = 100
             log['at200'] = {u['tag']: u['owner'] for u in w.units if u.get('tag')}
+        if t == 300:
+            w.res[1][8] = 120        # economist builds a granary
+        if t == 310:
+            log['pop310'] = (w.res[1][8], w.res[2][8])
         for p in (1, 2):
             for r in (3, 4):
                 if w.res[p][r] < 0:
                     log['negative'] = (p, r, t)
+        if t == 500:
+            w.res[1][6] = 0          # economist buys advisors with all his glory
+        if t == 540:
+            log['glory540'] = (w.res[1][6], w.res[2][6])
         if t == 1000:
             log['res1000'] = (dict(w.res[1]), dict(w.res[2]))
 
@@ -342,12 +358,24 @@ def stub_roles(m, vocab, info, label, theme, waves=True):
     check(log.get('at200', {}).get('found') == 2 or tags.get('found') == 2,
           label + ': finished building not handed over')
     check(log.get('at200', {}).get('done') == 2, label + ': complete building not handed over')
+    check(log.get('at200', {}).get('statue') == 2, label + ': glory statue not handed over')
     check(log.get('at200', {}).get('p2cit') == 1, label + ': P2 citizen not handed to P1')
     check(all(u['owner'] == 1 for u in w.units if u['type'] in cit and u['owner'] in (1, 2)),
           label + ': citizen left with P2')
     check('negative' not in log, label + ': negative resources %s' % (log.get('negative'),))
     r1, r2 = log['res1000']
     check(r2.get(3, 0) > 0 and r2.get(4, 0) > 0, label + ': no tithe reached P2 %s' % (r2,))
+    check(log.get('pop310') == (120, 120), label + ': P2 pop cap does not follow P1 %s' % (
+        log.get('pop310'),))
+    check(r1.get(8) == r2.get(8) == 120, label + ': pop cap at 1000 s %s / %s' % (r1.get(8), r2.get(8)))
+    check([(p, tk) for p, tk, _ in w.techs] == [(1, tk) for tk in C.HERO_LEVEL_TECHS],
+          label + ': hero level techs granted %s' % (w.techs,))
+    check(len(C.HERO_LEVEL_TECHS) == 9 and all(tt < 20 for _, _, tt in w.techs),
+          label + ': hero level techs late %s' % (w.techs,))
+    check(log.get('glory540') == (C.GLORY_CAP, 0), label + ': economist glory not refilled %s' % (
+        log.get('glory540'),))
+    check(r1.get(C.RES_MAXGLORY) == C.GLORY_CAP and not r2.get(C.RES_MAXGLORY),
+          label + ': max glory %s / %s' % (r1.get(C.RES_MAXGLORY), r2.get(C.RES_MAXGLORY)))
     n_tithe = len(f['SV Roles tithe gold 1'])
     check(abs(n_tithe - (1000 - 60) / 30) < 4 or n_tithe >= 25, label + ': tithe fired %d' % n_tithe)
     if waves:
@@ -361,6 +389,35 @@ def stub_roles(m, vocab, info, label, theme, waves=True):
         if t == 50 else None)), 120)
     check([u['owner'] for u in w2.units if u.get('tag') == 'f'] == [1],
           label + ': unfinished building handed over')
+
+
+def stub_civ_warning(m, vocab, label, lang='ru'):
+    tcs = C.start_town_centers(vocab)
+    civ = {vocab.objects[i].rsplit('(', 1)[1][:-1]: i for i in tcs}
+    check(len(tcs) == 4 and set(civ) == {'Greek', 'Egypt', 'Persian', 'Rome'},
+          label + ': start town centre types %s' % civ)
+    names = [R.T(t['name']) for t in m.triggers if R.T(t['name']).startswith('SV Roles civ warning')]
+    check(len(names) == 12 and len(set(names)) == 12, label + ': %d civ warning triggers' % len(names))
+    warning = M.coop(lang, 'roles_civ_warning')
+
+    def run(c1, c2, t_end=40):
+        def tick(w, t):
+            if t == 0.5:
+                for p, c in ((1, c1), (2, c2)):
+                    w.units.append(dict(owner=p, type=civ[c], alive=True, hp=100, born=t))
+        w, f = stub_run(m, vocab, two_humans(tick=tick, kill=lambda u, t: False), t_end)
+        return [t for t, msg in w.chat if msg == warning], sum(len(v) for k, v in f.items()
+                                                               if k.startswith('SV Roles civ warning'))
+    for c1 in civ:
+        for c2 in civ:
+            said, fired = run(c1, c2)
+            if c1 == c2:
+                check(not said and not fired, label + ': warning for %s + %s' % (c1, c2))
+            else:
+                check(len(said) == 1 and fired == 1 and 8 < said[0] < 12,
+                      label + ': %s + %s warned %s (fired %d)' % (c1, c2, said, fired))
+    check(len(run('Greek', 'Rome', 400)[0]) == 1, label + ': warning repeats')
+    print('  stub %s: civ warning once for each of the 12 mixed pairs, never for the same civ' % label)
 
 
 def stub_vsai(m, vocab, label):
@@ -478,6 +535,24 @@ def negative_tests(results, vocab):
             c['f50'] = 3
     m.triggers[[R.T(t['name']) for t in m.triggers].index('SV Roles tithe gold 1')]['true_for'] = 1
     caught('tithe without the stock guard', lambda: stub_roles(m, vocab, info, 'neg', theme))
+    m = copy.deepcopy(mr)
+    m.triggers[[R.T(t['name']) for t in m.triggers].index('SV Roles pop cap')]['on'] = 0
+    caught('pop cap not shared with P2', lambda: stub_roles(m, vocab, info, 'neg', theme))
+    m = copy.deepcopy(mr)
+    m.triggers[[R.T(t['name']) for t in m.triggers].index('SV Roles glory')]['on'] = 0
+    caught('economist glory not refilled', lambda: stub_roles(m, vocab, info, 'neg', theme))
+    m = copy.deepcopy(mr)
+    m.triggers[[R.T(t['name']) for t in m.triggers].index('SV Roles hero levels')]['on'] = 0
+    caught('economist gets no hero levels', lambda: stub_roles(m, vocab, info, 'neg', theme))
+    rn = [R.T(t['name']) for t in mr.triggers]
+    m = copy.deepcopy(mr)
+    m.triggers[next(i for i, n in enumerate(rn) if n.startswith('SV Roles civ warning'))]['on'] = 0
+    caught('civ warning trigger switched off', lambda: stub_civ_warning(m, vocab, 'neg'))
+    m = copy.deepcopy(mr)
+    for t in m.triggers:
+        if R.T(t['name']).startswith('SV Roles civ warning'):
+            t['if'] = [(0, 1, t['if'][0][2]), (0, 0, t['if'][1][2])]
+    caught('civ warning without the P2 civ condition', lambda: stub_civ_warning(m, vocab, 'neg'))
 
 
 # --------------------------------------------------------------------------- main
@@ -550,6 +625,8 @@ def main(argv):
     cit = set(vocab.set_members(vocab.unitset(B.UNITSETS['citizens']))['types'])
     check(len(mil) >= 100 and not (set(mil) & (heroes | cit)), 'roles: military type list %d' % len(mil))
     check(len(blds) >= 13 and not (set(blds) & set(mil)), 'roles: building type list %d' % len(blds))
+    statues = [i for i, n in enumerate(vocab.objects) if n.startswith('A - b  Statue Glory (')]
+    check(len(statues) == 4 and set(statues) <= set(blds), 'roles: glory statue types %s' % statues)
     print('  roles: %d military unit types, %d military building types, %d hero types, %d citizen types'
           % (len(mil), len(blds), len(heroes), len(cit)))
     print('5. stub engine')
@@ -565,6 +642,8 @@ def main(argv):
                results['roles'][0])
     stub_roles(R.Manager.parse(results['roles-ai'][2]), vocab, results['roles-ai'][3], 'roles-ai',
                results['roles-ai'][0], waves=False)
+    stub_civ_warning(R.Manager.parse(results['roles'][2]), vocab, 'roles')
+    stub_civ_warning(R.Manager.parse(results['roles-ai'][2]), vocab, 'roles-ai')
     stub_vsai(R.Manager.parse(results['vsai'][2]), vocab, 'vsai')
     negative_tests(results, vocab)
     print('FAILED: %d' % len(FAILS) if FAILS else 'ALL CHECKS PASSED')

@@ -39,7 +39,9 @@ import map_preview as P  # noqa: E402
 
 PLAYER_ALL_HUMANS, PLAYER_ALL_CPUS = B.PLAYER_ALL_HUMANS, B.PLAYER_ALL_CPUS
 P1, P2 = 7, 8                      # player enum 7.. = lobby player (value - 6)
-RES_GOLD, RES_WOOD, RES_VAR0 = 3, 4, 11
+RES_GOLD, RES_WOOD, RES_POPCAP, RES_VAR0 = 3, 4, 8, 11
+RES_GLORY, RES_MAXGLORY, GLORY_CAP = 6, 59, 99999
+HERO_LEVEL_TECHS = (6100, 7100, 8100, 9100, 10100, 10101, 10102, 10103, 10104)   # "A - ACTION - LEVEL 02..10 (Epoch tech)"
 OP_SET, OP_ADD, OP_SUB = 0, 1, 2   # ChangeResourceLevel 'amount' field (stock: gaugamela, scendefault)
 CMP_LT, CMP_GE, CMP_REF = 0, 3, 2  # PlayerHasResource 'f50' (stock: "Glory < 5" = 0, "Gold > 900" = 3, "REF ..." = 2)
 ATTR_HP = 3                        # object attribute filter: 3 = hit points (bde=1: percent)
@@ -488,19 +490,23 @@ def build_bosshunt(m, theme, vocab, opts, map_size):
 
 MILITARY_RE = re.compile(r'^A - (Inf|Arc|Cav)(0[1-5])[a-z]? - (.*) \([Ll]evel \d (Greek|Persian|Rome|Egypt)\)$')
 BUILDING_RE = re.compile(r'^A - b  (Barracks|Stable|Archery Range) ')
+STATUE_RE = re.compile(r'^A - b  Statue Glory \((Egypt|Greek|Rome|Persian)\)$')
+START_TC_RE = re.compile(r'^A - b  Town Center \(MP\) \((Egypt|Greek|Rome|Persian)\)$')
 
 ROLES = {
     'map': '(4) co-op roles', 'pretty': '(4) Co-op Roles', 'title': 'Co-op Roles',
     'help': 'Two players, two jobs: slot 1 is the economist (all citizens, builds the town), slot '
-            '2 the commander (gets every soldier and military building, paid by a tithe). '
-            'Against the survival waves. Add exactly one computer player.',
+            '2 the commander (gets every soldier, military building and glory statue, paid by a '
+            'tithe). Against the survival waves. Add exactly one computer player. Both humans '
+            'play the same civ.',
     'tithe': [(300, 100), (800, 200)],       # (P1 stock >= x, move y) per resource every 30 s
-    'tithe_every': 30, 'handover_every': 5,
+    'tithe_every': 30, 'handover_every': 5, 'glory_every': 5,
 }
 ROLES_AI = dict(ROLES, map='(4) co-op roles vs ai', pretty='(4) Co-op Roles vs AI',
                 title='Co-op Roles vs AI',
                 help='Two players, two jobs (slot 1 economist, slot 2 commander) against 1-2 '
-                     'computer players with their normal AI. Set the computers to the hardest level.')
+                     'computer players with their normal AI. Set the computers to the hardest level. '
+                     'Both humans play the same civ.')
 
 
 def military_types(vocab):
@@ -509,7 +515,11 @@ def military_types(vocab):
 
 
 def building_types(vocab):
-    return sorted(i for i, n in enumerate(vocab.objects) if BUILDING_RE.match(n))
+    return sorted(i for i, n in enumerate(vocab.objects) if BUILDING_RE.match(n) or STATUE_RE.match(n))
+
+
+def start_town_centers(vocab):
+    return sorted(i for i, n in enumerate(vocab.objects) if START_TC_RE.match(n))
 
 
 def roles_layer(theme, lang, intro_delay=600):
@@ -535,12 +545,37 @@ def roles_layer(theme, lang, intro_delay=600):
                                object=o), 0))
         b.trigger('SV Roles hand-over', [(b.time_after(2, 'SV Roles start'), False)], hand,
                   looping=True, true_for=theme['handover_every'])
+        c_pop = res_cond(b, P1, RES_POPCAP, 0, 'SV REF P1 pop cap', op=CMP_REF)
+        b.trigger('SV Roles pop cap', [(b.time_after(2, 'SV Roles pop cap start'), False)],
+                  [(set_resource(b, 'SV Roles P2 pop cap = P1', P2, RES_POPCAP, OP_SET,
+                                 token(b, c_pop)), 0)],
+                  looping=True, true_for=theme['handover_every'])
+        levels = [(b.eff((2, 5), 'SV Roles P1 hero level %d' % (i + 2), tech=tech, u44=2, b48=1,
+                         player=P1), 50 * i) for i, tech in enumerate(HERO_LEVEL_TECHS)]
+        levels.append((set_resource(b, 'SV Roles P1 max glory', P1, RES_MAXGLORY, OP_SET,
+                                    GLORY_CAP), 0))
+        b.trigger('SV Roles hero levels', [(b.time_after(3, 'SV Roles hero levels start'), False)],
+                  levels)
+        b.trigger('SV Roles glory', [(b.time_after(4, 'SV Roles glory start'), False)],
+                  [(set_resource(b, 'SV Roles P1 glory', P1, RES_GLORY, OP_SET, GLORY_CAP), 0)],
+                  looping=True, true_for=theme['glory_every'])
         b.trigger('SV Roles intro', [(b.time_after(6, 'SV Roles intro time'), False)],
                   [(b.chat(M.coop(lang, 'roles_intro'), 30), intro_delay),
                    (b.chat(M.coop(lang, 'roles_tithe', every=theme['tithe_every'],
                                   give=theme['tithe'][0][1], have=theme['tithe'][0][0],
                                   more=theme['tithe'][1][0]), 30),
                     intro_delay + 300)])
+        tcs = start_town_centers(vocab)
+        tc1 = {ut: b.obj('SV Roles P1 start TC %d' % ut, P1, unit_type=ut) for ut in tcs}
+        tc2 = {ut: b.obj('SV Roles P2 start TC %d' % ut, P2, unit_type=ut) for ut in tcs}
+        for u1 in tcs:
+            for u2 in tcs:
+                if u1 != u2:
+                    b.trigger('SV Roles civ warning %d-%d' % (u1, u2),
+                              [(b.time_after(8, 'SV Roles civ check time'), False),
+                               (b.exists(tc1[u1], 'SV Roles P1 has TC %d' % u1), False),
+                               (b.exists(tc2[u2], 'SV Roles P2 has TC %d' % u2), False)],
+                              [(b.chat(M.coop(lang, 'roles_civ_warning'), 30), 0)])
         for res, rname in ((RES_GOLD, 'gold'), (RES_WOOD, 'wood')):
             for i, (have, give) in enumerate(theme['tithe']):
                 c = res_cond(b, P1, res, have, 'SV Roles P1 %s >= %d' % (rname, have))

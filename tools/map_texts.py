@@ -91,13 +91,13 @@ LOBBY = {
                'полководец: ему переходят все солдаты, герои и готовые военные здания, '
                'экономист платит ему дань. 20 волн с осадными машинами.\n'
                '/fbЛобби/fd - люди строго в слотах 1 и 2 одной команды, ровно один компьютер в '
-               'другой.'),
+               'другой, у людей одна цивилизация.'),
         'en': ('(4) Co-op Roles',
                '(4) /fbCo-op Roles/fd - Slot 1 is the economist: citizens, building, resources. '
                'Slot 2 is the commander: he gets every soldier, hero and finished military '
-               'building, paid by a tithe. 20 waves with siege engines.\n'
+               'building, paid by tithe. 20 waves with siege engines.\n'
                '/fbLobby/fd - humans exactly in slots 1 and 2 of one team, exactly one computer '
-               'on another.'),
+               'on another, same civ for both.'),
     },
     '(4) co-op roles vs ai': {
         'ru': ('(4) Кооп: роли против ИИ',
@@ -105,13 +105,13 @@ LOBBY = {
                'полководец), но без волн: 1-2 компьютера со своим ИИ в союзе друг с другом. '
                'Цель - обычная победа.\n'
                '/fbЛобби/fd - люди строго в слотах 1 и 2 одной команды, 1-2 компьютера в '
-               'другой, сложность максимальная.'),
+               'другой, сложность максимальная. У людей одна цивилизация.'),
         'en': ('(4) Co-op Roles vs AI',
                '(4) /fbCo-op Roles vs AI/fd - The same roles (slot 1 economist, slot 2 '
                'commander) without waves: 1-2 computers with their own AI, allied with each '
                'other. Goal: a normal win.\n'
                '/fbLobby/fd - humans exactly in slots 1 and 2 of one team, 1-2 computers on '
-               'another, hardest difficulty.'),
+               'another, hardest difficulty. Same civ for both humans.'),
     },
     '(5) co-op vs hard ai': {
         'ru': ('(5) Кооп против сильного ИИ',
@@ -320,11 +320,13 @@ def coop(lang, key, **k):
             (red('The town has fallen.') + ' The hunt is over.')
     if key == 'roles_intro':
         return (gold('РОЛИ') + '  Слот 1 = ЭКОНОМИСТ: все жители, строит все. Слот 2 = '
-                'ПОЛКОВОДЕЦ: ему переходят все солдаты, герои и достроенные казармы, конюшни и '
-                'стрельбища.') if ru else \
+                'ПОЛКОВОДЕЦ: ему переходят все солдаты, герои и достроенные казармы, конюшни, '
+                'стрельбища и статуи славы. Лимит населения у обоих общий. Экономист: уровень '
+                'героя 10 и безлимитная слава для советников.') if ru else \
             (gold('ROLES') + '  Slot 1 = ECONOMIST: all citizens, builds '
              'everything. Slot 2 = COMMANDER: every soldier, hero and finished '
-             'barracks/stable/archery range goes to him.')
+             'barracks/stable/archery range/glory statue goes to him. Both share one pop cap. '
+             'Economist: hero level 10 + unlimited glory for advisors.')
     if key == 'roles_tithe':                   # k['every'], k['give'], k['have'], k['more']
         if ru:
             return ('Дань: каждые %d с экономист отдает полководцу %d золота и %d дерева, если '
@@ -333,6 +335,11 @@ def coop(lang, key, **k):
         return ('Tithe: every %d s the economist pays the commander %d gold and %d wood '
                 'when he holds %d+, more above %d.' % (k['every'], k['give'], k['give'],
                                                        k['have'], k['more']))
+    if key == 'roles_civ_warning':
+        return (red('РАЗНЫЕ ЦИВИЛИЗАЦИИ!') + ' Выберите одну цивилизацию для обоих игроков: при '
+                'разных могут пропасть юниты.') if ru else \
+            (red('DIFFERENT CIVS!') + ' Use the same civ for both players; mixed civs can miss '
+             'units.')
     if key == 'roles_ai_intro':
         return (gold('КООП: РОЛИ ПРОТИВ ИИ') + '  Компьютеры играют со своим ИИ.') if ru else \
             (gold('CO-OP ROLES vs AI') + '  The computers keep their own AI.')
