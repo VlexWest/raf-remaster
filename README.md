@@ -8,19 +8,44 @@ It is tested with the Russian version 1.15 of the game. Other language versions 
 
 On a non-Russian install the new texts (co-op maps, menus) are English.
 
+See the [changelog](CHANGELOG.md) for what changed in each version.
+
 ## Features
+
+### 🖥️ Graphics & display
 
 - Borderless fullscreen at your desktop resolution
 - Smooth camera scrolling & a wider zoom (slider in Options > Interface)
 - Ultra graphics settings, full mipmaps & reworked unit, terrain & water shaders
 - Optional HD textures, upscaled on your own graphics card
 - DXVK (Direct3D 9 on Vulkan) on GPUs that support it
+
+### ⚔️ Gameplay & AI
+
 - A harder Hard AI with its own personality per civilization
 - Smarter unit AI for artillery & transports
-- Unit limit raised to 10000
+- Smarter archer targeting: ranged units prefer siege engines, then archers, then heroes. Guard stance is an anti-siege mode
 - Archers & spearmen can be trained in the barracks & archery ranges of other civilizations
-- New co-op maps, including an endless Survival mode with siege waves in three difficulties
-- Fix for dead mouse clicks right after launch
+- Unit limit raised to 10000
+
+### 🏰 Co-op & maps
+
+- Survival: an endless mode with siege waves in three difficulties
+- Boss Hunt, Co-op Roles & Co-op vs Hard AI
+- Co-op Roles fixes: shared population limit, glory statues for the commander, a strong start for the economist
+
+### 🌐 Multiplayer & install
+
+- The installer builds a new game folder from your own files. Your original install is never changed
+- LAN & direct IP games with a fingerprint check against desyncs
+- Updates from the launcher with "Update now". Setup in Russian, German & English
+- Works with other language versions of 1.15 if the exe matches
+
+### 🔧 Fixes
+
+- Dead mouse clicks right after launch
+- Graphics options you change in game are kept
+- No console windows flashing during the install
 
 ## Install
 
@@ -50,6 +75,14 @@ The remaster adds maps you play together against the computer:
 - **Co-op vs Hard AI**: two players against three computer players
 
 Pick them in the skirmish or LAN lobby like any other map.
+
+In Co-op Roles the commander's population limit follows the economist's (granary, market, altar...) & finished glory statues go to the commander. The economist starts with hero level 10 & unlimited glory, so he can hire all advisors. A warning shows when the two players pick different civilizations, so play the same civ for both.
+
+## Smarter archer targeting
+
+Ranged units pick targets in this order: siege engines, then archers, then heroes. They do not leave targets in range. The feature is called "target-priority" & is on by default.
+
+Guard stance is an anti-siege mode: siege engines in range always come first. Use it for wall defenders.
 
 ## Linux & Steam Deck
 
