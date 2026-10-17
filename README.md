@@ -41,12 +41,6 @@ See the [changelog](CHANGELOG.md) for what changed in each version.
 - Updates from the launcher with "Update now". Setup in Russian, German & English
 - Works with other language versions of 1.15 if the exe matches
 
-### 🔧 Fixes
-
-- Dead mouse clicks right after launch
-- Graphics options you change in game are kept
-- No console windows flashing during the install
-
 ## Install
 
 Download `RaF-Remaster-Setup.exe` from [Releases](../../releases) & run it.
