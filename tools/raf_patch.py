@@ -19,6 +19,8 @@ Features (see FEATURES; `features` prints them with their default):
   shaders                              fx overlay (shader.cache is moved aside so the game rebuilds it)
   ai-hard, ai-personalities, unit-ai, maps, survival, coop-modes, crossciv
                                        gameplay data (all players need the same set: REMASTER.txt)
+  target-priority                      ranged units prefer siege/archers/heroes (exe patch, gameplay:
+                                       changes the fingerprint while installed)
   lang-en                              English language pack (needs work/lang/en.json, not in the repo)
   credits, menu-credit                 credits roll, Language.dll lines, splash credit; menu-credit
                                        adds the main menu corner line + splash bar (needs credits)
@@ -165,6 +167,43 @@ CLICK_FIX = [
      "click fix cave (45 bytes)"),
     (EXE, 0x00BA73FD, "a198b4c4008b08807908007513", "e97ec413009090909090909090",
      "input loop: Resume a suspended mouse/keyboard"),
+]
+
+# Feature `target-priority` (docs/ai.md 1.4): ranged units (dbaiunittargeting class Short/Long) score
+# siege > archers > heroes above the rest; in weapon range the bonus stays below the in-range term
+# (Short 25/18/10 < 30, Long 40/25/15 < 50), out of range it is small (8/6/3, 12/8/5). Stance Guard:
+# in-range siege +75. Hooks the in-range block and the end of the score sum of the unit scan
+# FUN_00a8c8c0, the grid scan FUN_00a92810 and the formation chooser FUN_00935fa0; the two scans stop
+# at Short 100 / Long 125 instead of 15 (exe, not the .dat: FUN_00557450 also weighs goals with that
+# value). Integer adds only. Simulation path; the exe is not a gameplay file, so fingerprint() mixes in
+# TARGET_PRIORITY_MARK while it is installed. Generated and tested offline by tools/test_target_priority.py
+# (tables 0xCE3C00..0xCE3C87, code 0xCE3C90..0xCE3E53).
+TARGET_PRIORITY = [
+    (EXE, 0x00CE3C00, "00" * 136,
+     "0000000000080603000c08050000000000110c07001c110a0000000000430c07003f110a00647d000000000000000000"
+     "030000000000020000000000000000000000000000020101000000000000000000000000000000000000000000000200"
+     "00010000000001010001000001000000000000000000000000000000000000000000000000000000",
+     "target priority tables (136 bytes)"),
+    (EXE, 0x00CE3C90, "00" * 452,
+     "8b829000000085c074138b802002000083f86073080fb680283cce00c333c0c38b1504f0d20085c0740e85d2740a8b80"
+     "240600003b4208c383ca01c383fa02770d0fb692243cce0085d274028bc2c38b56588b04930368088b4e5883f9027728"
+     "8bd7e899ffffff8d0488508b4624e8adffffff5875090fb690183cce00eb070fb6900c3cce0003eae95a8fdaff03e883"
+     "c4048b4e5883f90277118bd7e85fffffff0fb68488003cce0003e8e9ea8fdaff8b1560c9d2008b45148b0c820371088b"
+     "4d1483f90277278bd7e832ffffff8d0488508bc3e847ffffff5875090fb690183cce00eb070fb6900c3cce0003f2e96d"
+     "efdaff03f083c4048b4d1483f90277118bd7e8f9feffff0fb68488003cce0003f0e9e5efdaff8b47688b0d60c9d2008b"
+     "1481035a088b4f6883f90277278bd6e8ccfeffff8d0488508bc5e8e1feffff5875090fb690183cce00eb070fb6900c3c"
+     "ce0003dae9ba24c5ff83c40403d88b4f6883f90277118bd6e893feffff0fb68488003cce0003d8e94925c5ff8b5658a1"
+     "60c9d2008b0c908b4124e8adfeffff3be80f8c7d8fdaffe9748fdaff8b4d14a160c9d2008b14888b42248bd1e88bfeff"
+     "ff3bf0897df48975d80f8d88efdaffe974efdaff",
+     "target priority cave (452 bytes)"),
+    (EXE, 0x00A8CC6E, "8b56588b0493036808", "e96c70250090909090", "unit scan: in-range bonus"),
+    (EXE, 0x00A8CD25, "03e883c404", "e9f36f2500", "unit scan: family tier bonus"),
+    (EXE, 0x00A92CE1, "8b1560c9d2008b45148b0c82037108", "e95a10250090909090909090909090", "grid scan: in-range bonus"),
+    (EXE, 0x00A92D86, "03f083c404", "e9f80f2500", "grid scan: family tier bonus"),
+    (EXE, 0x00936294, "8b47688b0d60c9d2008b1481035a08", "e90ddb3a0090909090909090909090", "formation: in-range bonus"),
+    (EXE, 0x00936350, "83c40403d8", "e994da3a00", "formation: family tier bonus"),
+    (EXE, 0x00A8CD90, "a160c9d200", "e977702500", "unit scan: stop threshold"),
+    (EXE, 0x00A92DA5, "a160c9d200", "e982102500", "grid scan: stop threshold"),
 ]
 
 # Addresses are for the v1.15 (08.18.2006) files; every patch checks the original bytes first.
@@ -605,6 +644,7 @@ FEATURES = {
     "menu-credit": True,  # main menu credit lines + loading screen bar; live-checked 2026-10-15
     "openspy": False,
     "click-fix": True,  # Resume a suspended mouse/keyboard each frame; live-tested 2026-10-15
+    "target-priority": False,  # ranged units shoot siege/archers/heroes first (exe); off until tested in game
 }
 # The autodetect does not know the GPU and leaves every quality at 0 ("Низко"); 3 = "Ультра".
 # The shader upgrade only shows with the higher techniques.
@@ -780,7 +820,26 @@ def fingerprint(game: Path) -> str:
             if f.is_file() and f.suffix.lower() != ".lcl":  # .lcl = scenario text (language pack)
                 h.update(f.relative_to(game).as_posix().lower().encode() + b"\0")
                 h.update(hashlib.sha256(f.read_bytes()).digest())
+    if target_priority_installed(game):
+        h.update(TARGET_PRIORITY_MARK)
     return h.hexdigest()[:12]
+
+
+# Exe gameplay patch in the fingerprint; only mixed in when installed, so the value without it stays.
+TARGET_PRIORITY_MARK = (b"exe:target-priority\0"
+                        + hashlib.sha256(b"".join(bytes.fromhex(p[3]) for p in TARGET_PRIORITY)).digest())
+
+
+def target_priority_installed(game: Path) -> bool:
+    exe = game / EXE
+    if not exe.is_file():
+        return False
+    data = exe.read_bytes()
+    for _, va, _old, new, _ in TARGET_PRIORITY:
+        off = pe_va_to_offset(data, va)
+        if data[off:off + len(new) // 2].hex() != new:
+            return False
+    return True
 
 
 def check_game_dir(game: Path) -> None:
@@ -857,6 +916,7 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     byte_patches(game, AI_CIV_GATE, "ai-personalities" in feats, "ai civ gate")
     byte_patches(game, BORDERLESS, borderless, "borderless")
     byte_patches(game, CLICK_FIX, "click-fix" in feats, "click-fix")
+    byte_patches(game, TARGET_PRIORITY, "target-priority" in feats, "target-priority")
     byte_patches(game, SMOOTH_SCROLL, "smooth-scroll" in feats, "smooth-scroll")
     byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0 (old)")
     zoom_given = zoom is not None

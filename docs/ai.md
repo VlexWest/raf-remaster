@@ -68,7 +68,24 @@ target gone --> ShouldIReturnToInitialContactLocation --> CanISeeEnemy -> CheckR
 UnderAttack --CanFlee--> RunFromAttacker ; else if attacker reachable and we are idle -> RetaliateAgainstAttacker
 ```
 
-Target selection (who `CanISeeEnemy` / `EnemyUnitSpotted` picks) is **not** in the scripts. `Data\db\dbaiunittargeting.dat` (484 bytes, strings `Melee | Short Range | Long Range`) looks like the priority table, and `dbunitbehavior.dat` holds the stances (`Scout, Stand Ground, Guard, Harass, Cautious, Aggressive, Healing Hero, Morale Hero, No Fight No Flee`) that drive `CanFlee` / `CanIMoveFreely` / `ShouldIRun` (likely, from names and from `Guard*`/`Defend*` states in the exe).
+Target selection (who `CanISeeEnemy` / `EnemyUnitSpotted` picks) is **not** in the scripts. It is engine code driven by `Data\db\dbaiunittargeting.dat` (section 1.4), and `dbunitbehavior.dat` holds the stances (`Scout, Stand Ground, Guard, Harass, Cautious, Aggressive, Healing Hero, Morale Hero, No Fight No Flee`) that drive `CanFlee` / `CanIMoveFreely` / `ShouldIRun` (likely, from names and from `Guard*`/`Defend*` states in the exe).
+
+### 1.4 How a unit picks its target (engine, read from the decompiled exe)
+
+- `dbaiunittargeting.dat` has three 160-byte records, one per *class*: 0 Melee, 1 Short Range, 2 Long Range. The loader `FUN_005f2250` keeps record bytes 0x6c..0x8c and 0x9c as a 0x28-byte row, `DAT_00d2c960[class]`. A unit is Melee when its def flag +0x3f8 is set, else Long when its weapon range (+0x6f4) is above the radius of its vtable+0xf0 (likely sight), else Short (`FUN_00a84e10`).
+- Row (offset: meaning, Melee / Short / Long): +0x00 candidate is attacking me 2/15/10, +0x04 not used by the scorers 1/20/15, +0x08 candidate in weapon range 50/30/50, +0x0c candidate +0x6f0 (attack) below mine 1/6/4, +0x10 candidate vtable+0x6c (likely health) below mine 1/6/4, +0x14 preferred object type (0 = none; a match takes the target at once), +0x18 weight of the family damage multiplier 1/1/1, +0x1c weight of 1/dist² 50/2/0, +0x20 candidate +0x6f0 == 0: -500, +0x24 stop threshold 50/15/15.
+- Scorer: `FUN_00a8c8c0` (unit scan; context built by `FUN_00a84e10`: ctx+0x24 attacker, +0x58 class, +0x70 best score, +0x75 stop flag). Each enemy around the unit gets the sum above (integers; the two float terms rounded by `FUN_004067e0`); the best score is kept and the scan stops when a score reaches +0x24. With 15 that is the first enemy in weapon range, so for ranged units the "priority" is in practice "first one in range". The same formula is in `FUN_00a92810` (scan over the map grid; loops while score < +0x24) and the formation chooser `FUN_00935fa0` (no stop). `FUN_004a27d0` re-scores a unit goal with the same row; `FUN_00557450` (a goal weight) uses 3 x the threshold, so the threshold must not be raised in the .dat.
+- Families (`dbobjects` record 0x68 = def +0x220, `dbfamily.dat` index): siege 30 Ram, 31 Siege 333 (ballista, palintonos, onager, tower catapult, ladder unit), 57 Ladder Team, 62 Siege Tower, 63 Siege Building (siege under construction), 65 Naval Siege, 68 Entrenched Siege (unpacked siege towers); archers 29 Human Archer, 14 Mounted Archer (chariots, horse archers), 54 Cavalry Archer (no objects); hero 8.
+- Stance: unit +0x624 points into the `dbunitbehavior` vector `[0xD2F004]` (set by the EEMSetUnitBehavior handler `FUN_005d63e0`); index 2 is Guard (UI button control 0xe9, `FUN_00b77490`).
+
+**Feature `target-priority`** (exe patch, default off until tested live; `tools/raf_patch.py` `TARGET_PRIORITY`, generated and tested by `tools/test_target_priority.py`). For classes Short/Long only, all three scorers add a family tier bonus:
+
+| | all candidates | in weapon range (total) | in range, attacker in Guard |
+|---|---|---|---|
+| Short: siege / archers / hero | 8 / 6 / 3 | 25 / 18 / 10 (< +30) | siege 75 |
+| Long: siege / archers / hero | 12 / 8 / 5 | 40 / 25 / 15 (< +50) | siege 75 |
+
+The in-range bonus stays below the in-range term, so a unit does not leave enemies in range for a far siege engine; out of range it only breaks ties. In Guard an in-range siege engine beats every other in-range target (wall defenders shoot rams and towers first). The two scans stop at Short 100 / Long 125 instead of 15, so they look at every candidate (more work per scan: all enemies around a ranged unit are scored instead of stopping at the first in range); a Guard unit still stops at the first in-range siege. Melee is unchanged. Integer adds only, deterministic. Hooks: in-range blocks 0xA8CC6E / 0xA92CE1 / 0x936294, end of the sums 0xA8CD25 / 0xA92D86 / 0x936350, stop tests 0xA8CD90 / 0xA92DA5; tables 0xCE3C00..0xCE3C87, code 0xCE3C90..0xCE3E53 (.RDATA zero tail). The Guard test only compares the attacker's +0x624 (null attacker = no Guard); every scanned attacker is a unit object of at least 0x940 bytes (`FUN_00a84e10` reads its +0x93e), towers/buildings hold 0 or a stance pointer there. Simulation path: `fingerprint()` mixes in `TARGET_PRIORITY_MARK` (name + hash of the patch bytes) while the patch is installed; off, the fingerprint is unchanged.
 
 ## 2. Weaknesses a player would notice
 

@@ -298,4 +298,6 @@ TEXT = {
     "f_survival": {"de": "Survival-Karten", "ru": "карты Survival", "en": "survival maps"},
     "f_coop-modes": {"de": "Koop-Karten", "ru": "кооперативные карты", "en": "co-op maps"},
     "f_zoom-setting": {"de": "Zoom-Regler", "ru": "ползунок отдаления камеры", "en": "zoom slider"},
+    "f_target-priority": {"de": "Zielwahl: Belagerung zuerst", "ru": "выбор цели: осадные орудия первыми",
+                          "en": "target choice: siege first"},
 }

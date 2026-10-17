@@ -156,6 +156,8 @@ def expected_fingerprint(stock: Path) -> str:
         for rel in sorted(r for r in files if r.startswith(d.lower() + "/")):
             h.update(rel.encode() + b"\0")
             h.update(hashlib.sha256(files[rel].read_bytes()).digest())
+    if "target-priority" in FEATURES:
+        h.update(rp.TARGET_PRIORITY_MARK)
     return h.hexdigest()[:12]
 
 
