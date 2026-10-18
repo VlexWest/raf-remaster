@@ -300,4 +300,10 @@ TEXT = {
     "f_zoom-setting": {"de": "Zoom-Regler", "ru": "ползунок отдаления камеры", "en": "zoom slider"},
     "f_target-priority": {"de": "Zielwahl: Belagerung zuerst", "ru": "выбор цели: осадные орудия первыми",
                           "en": "target choice: siege first"},
+    "f_naval-ai": {"de": "KI: Schiffe mit Truppen", "ru": "ИИ: корабли с войсками",
+                   "en": "AI: ships with troops"},
+    "f_ally-attack": {"de": "KI: greift mit Verbündeten an", "ru": "ИИ: атакует вместе с союзниками",
+                      "en": "AI: attacks with its allies"},
+    "f_attack-choice-fix": {"de": "KI: Zielwahl nach Gewichtung", "ru": "ИИ: выбор цели атаки по весам",
+                            "en": "AI: weighted attack choice"},
 }

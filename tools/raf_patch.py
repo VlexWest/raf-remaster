@@ -21,6 +21,11 @@ Features (see FEATURES; `features` prints them with their default):
                                        gameplay data (all players need the same set: REMASTER.txt)
   target-priority                      ranged units prefer siege/archers/heroes (exe patch, gameplay:
                                        changes the fingerprint while installed)
+  naval-ai                             AI ships sail only with troops aboard, Easy AI loads troops too,
+                                       earlier first ferry (exe patch, gameplay: changes the fingerprint)
+  ally-attack                          AI joins the attack target of its AI allies (exe patch, gameplay)
+  attack-choice-fix                    AI attack choice follows the Close/Resource/Revenge percentages
+                                       (exe patch, gameplay: changes the fingerprint)
   lang-en                              English language pack (needs work/lang/en.json, not in the repo)
   credits, menu-credit                 credits roll, Language.dll lines, splash credit; menu-credit
                                        adds the main menu corner line + splash bar (needs credits)
@@ -204,6 +209,49 @@ TARGET_PRIORITY = [
     (EXE, 0x00936350, "83c40403d8", "e994da3a00", "formation: family tier bonus"),
     (EXE, 0x00A8CD90, "a160c9d200", "e977702500", "unit scan: stop threshold"),
     (EXE, 0x00A92DA5, "a160c9d200", "e982102500", "grid scan: stop threshold"),
+]
+
+# Feature `naval-ai` (docs/ai-naval.md section 6, RAF-9: the AI sends no ships or empty ships).
+# P1 0x55929c: the "load timer expired at home shore" branch of the ferry load state (0x1f6) sailed
+# without looking at the hold; `jmp 0x5592ae` runs the existing cargo test (cargo -> sail, empty -> state 0).
+# P2 0x4bbc00: the boarding request FUN_004bbbd0 skipped idle units on Easy and on maps outside the four
+# island map ids; the je becomes a jmp, so every moored ship at home asks for troops.
+# P3 0xc56428: the early ferry gate (1 - slider/10) * 2 700 000 ms, 45 min with the slider unused, becomes
+# 900 000 ms (15 min); the 0.75 at 0xc56424 is shared with the crew code and stays. Simulation path:
+# fingerprint() mixes in NAVAL_AI_MARK while it is installed. Tested offline by tools/test_naval_ai.py.
+NAVAL_AI = [
+    (EXE, 0x0055929C, "8b16", "eb10", "ferry load timer expired: check the hold before sailing"),
+    (EXE, 0x004BBC00, "7410", "eb10", "boarding request: always ask idle units to board"),
+    (EXE, 0x00C56428, "80cb244a", "00ba5b49", "early ferry gate 45 min -> 15 min"),
+]
+
+# Feature `ally-attack` (docs/ai-coop.md candidate A, RAF-8): the AI attack decision FUN_004ce870 stores
+# the chosen player into the attack task at 0x4cf1fb; the hook jumps to a cave that walks the own ally
+# vector (+0xa74..+0xa78) and the attack-group deque of every AI ally ([[cp+0x10e8]+0xc4]) and takes the
+# target (+0x4c) of the first live group that is still my enemy and not defeated; else the stock pick
+# stays. Integer reads only, no RNG, no allocation; the counter-attack branch is untouched. Simulation
+# path: fingerprint() mixes in ALLY_ATTACK_MARK while it is installed. Generated and tested offline by
+# tools/test_ai_coop.py (cave 0xCE3E90..0xCE3F69, between the stray dwords 0xCE3E8C and 0xCE3F81).
+ALLY_ATTACK = [
+    (EXE, 0x00CE3E90, "00" * 218,
+     "608b4424548ba8c00000008bb5740a0000eb118944241c61898424ec000000e94eb37eff3bb5780a000073eb8b1e83c6"
+     "0485db74ef3bdd74eb80bb7f0400000075e280bb7b1000000075d98b83f80d000085c074cf8b80e810000085c074c58b"
+     "b8c400000085ff74bb33c93b4f1473b48b471003c1418bd081e2ff030000c1e80a3b470c72032b470c8b5f088b04838b"
+     "049085c074d580786e0075cf8b500885d274c83b500c74c38b404c85c074bc3bc574b880b87f0400000075af80b87b10"
+     "00000075a68b907404000083bc95300e0000007496e939ffffff",
+     "ally attack cave (218 bytes)"),
+    (EXE, 0x004CF1FB, "898424ec000000", "e9904c81009090", "attack target: join an AI ally's target"),
+]
+
+# Feature `attack-choice-fix` (docs/ai-coop.md section 2 quirk): the attack choice roll r in [0,1) was
+# compared with the integer weights AttackChoiceProbabilityClose / +Resource (stock 70 / 90), so Close
+# always won. The Generate call at 0x4cf143 becomes `call cave; nop`; the cave calls Generate and
+# multiplies st0 by 100.0, so the stock compares split Close / Resource / Revenge by the percentages.
+# Same single RNG draw. Simulation path: fingerprint() mixes in ATTACK_CHOICE_FIX_MARK while installed.
+# Tested offline by tools/test_ai_coop.py (100.0 at 0xCE3F6C, code 0xCE3F70..0xCE3F7C).
+ATTACK_CHOICE_FIX = [
+    (EXE, 0x00CE3F6C, "00" * 17, "0000c842ff15c0a3c400d80d6c3fce00c3", "attack choice cave (17 bytes)"),
+    (EXE, 0x004CF143, "ff15c0a3c400", "e8284e810090", "attack choice roll x100"),
 ]
 
 # Addresses are for the v1.15 (08.18.2006) files; every patch checks the original bytes first.
@@ -645,6 +693,9 @@ FEATURES = {
     "openspy": False,
     "click-fix": True,  # Resume a suspended mouse/keyboard each frame; live-tested 2026-10-15
     "target-priority": True,  # ranged units shoot siege/archers/heroes first (exe)
+    "naval-ai": True,  # AI ferries only with troops aboard (exe, docs/ai-naval.md)
+    "ally-attack": True,  # AI joins its AI allies' attack target (exe, docs/ai-coop.md)
+    "attack-choice-fix": True,  # attack choice roll x100 against the 70/20/10 weights (exe, docs/ai-coop.md)
 }
 # The autodetect does not know the GPU and leaves every quality at 0 ("Низко"); 3 = "Ультра".
 # The shader upgrade only shows with the higher techniques.
@@ -822,6 +873,12 @@ def fingerprint(game: Path) -> str:
                 h.update(hashlib.sha256(f.read_bytes()).digest())
     if target_priority_installed(game):
         h.update(TARGET_PRIORITY_MARK)
+    if naval_ai_installed(game):
+        h.update(NAVAL_AI_MARK)
+    if ally_attack_installed(game):
+        h.update(ALLY_ATTACK_MARK)
+    if attack_choice_fix_installed(game):
+        h.update(ATTACK_CHOICE_FIX_MARK)
     return h.hexdigest()[:12]
 
 
@@ -836,6 +893,54 @@ def target_priority_installed(game: Path) -> bool:
         return False
     data = exe.read_bytes()
     for _, va, _old, new, _ in TARGET_PRIORITY:
+        off = pe_va_to_offset(data, va)
+        if data[off:off + len(new) // 2].hex() != new:
+            return False
+    return True
+
+
+NAVAL_AI_MARK = (b"exe:naval-ai\0"
+                 + hashlib.sha256(b"".join(bytes.fromhex(p[3]) for p in NAVAL_AI)).digest())
+
+
+def naval_ai_installed(game: Path) -> bool:
+    exe = game / EXE
+    if not exe.is_file():
+        return False
+    data = exe.read_bytes()
+    for _, va, _old, new, _ in NAVAL_AI:
+        off = pe_va_to_offset(data, va)
+        if data[off:off + len(new) // 2].hex() != new:
+            return False
+    return True
+
+
+ALLY_ATTACK_MARK = (b"exe:ally-attack\0"
+                    + hashlib.sha256(b"".join(bytes.fromhex(p[3]) for p in ALLY_ATTACK)).digest())
+
+
+def ally_attack_installed(game: Path) -> bool:
+    exe = game / EXE
+    if not exe.is_file():
+        return False
+    data = exe.read_bytes()
+    for _, va, _old, new, _ in ALLY_ATTACK:
+        off = pe_va_to_offset(data, va)
+        if data[off:off + len(new) // 2].hex() != new:
+            return False
+    return True
+
+
+ATTACK_CHOICE_FIX_MARK = (b"exe:attack-choice-fix\0"
+                          + hashlib.sha256(b"".join(bytes.fromhex(p[3]) for p in ATTACK_CHOICE_FIX)).digest())
+
+
+def attack_choice_fix_installed(game: Path) -> bool:
+    exe = game / EXE
+    if not exe.is_file():
+        return False
+    data = exe.read_bytes()
+    for _, va, _old, new, _ in ATTACK_CHOICE_FIX:
         off = pe_va_to_offset(data, va)
         if data[off:off + len(new) // 2].hex() != new:
             return False
@@ -917,6 +1022,9 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     byte_patches(game, BORDERLESS, borderless, "borderless")
     byte_patches(game, CLICK_FIX, "click-fix" in feats, "click-fix")
     byte_patches(game, TARGET_PRIORITY, "target-priority" in feats, "target-priority")
+    byte_patches(game, NAVAL_AI, "naval-ai" in feats, "naval-ai")
+    byte_patches(game, ALLY_ATTACK, "ally-attack" in feats, "ally-attack")
+    byte_patches(game, ATTACK_CHOICE_FIX, "attack-choice-fix" in feats, "attack-choice-fix")
     byte_patches(game, SMOOTH_SCROLL, "smooth-scroll" in feats, "smooth-scroll")
     byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0 (old)")
     zoom_given = zoom is not None

@@ -158,6 +158,12 @@ def expected_fingerprint(stock: Path) -> str:
             h.update(hashlib.sha256(files[rel].read_bytes()).digest())
     if "target-priority" in FEATURES:
         h.update(rp.TARGET_PRIORITY_MARK)
+    if "naval-ai" in FEATURES:
+        h.update(rp.NAVAL_AI_MARK)
+    if "ally-attack" in FEATURES:
+        h.update(rp.ALLY_ATTACK_MARK)
+    if "attack-choice-fix" in FEATURES:
+        h.update(rp.ATTACK_CHOICE_FIX_MARK)
     return h.hexdigest()[:12]
 
 
