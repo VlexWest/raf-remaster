@@ -78,8 +78,11 @@ repository (or at least its releases) is public.
    and `keep_settings`: every registry value the remaster already manages keeps the player's value
    (graphics quality, resolution, vsync, zoom slider, view distance); only the network adapter is
    picked again and values new in this version are written;
-4. swaps the folders (`<dir>` -> `<dir>.raf-old`, `<dir>.raf-update` -> `<dir>`); if the second
-   rename fails the first is undone;
+4. swaps the folder contents: every entry of `<dir>` moves into a new `<dir>.raf-old`, then every
+   entry of `<dir>.raf-update` moves into `<dir>`. `<dir>` itself is never renamed, so an open
+   handle on it (an Explorer window, a shell, a scanner) does not block the update. A failing move
+   puts back all entries moved so far. If a move fails, Explorer windows showing the folder are
+   switched to its parent once and the swap is retried before the player is asked;
 5. copies the player's files over from the old folder: everything the new build does not have
    (saves and profiles under `Users\`, own maps, logs) and game-written changes to files the remaster
    does not patch; never files the old version installed itself (managed overlay files), the old
@@ -89,9 +92,11 @@ repository (or at least its releases) is public.
 
 Rollback: before step 4 a failure deletes `<dir>.raf-update` and puts back the registry values from
 before the update (snapshot taken right before the apply); the old install was never touched. A
-failure in steps 5-6 renames the new folder away and the old one back, then restores the registry.
-A crash between the two renames of step 4 is repaired by the next update run (it renames
-`<dir>.raf-old` back when `<dir>` is missing).
+failure in steps 5-6 moves the new entries to `<dir>.raf-failed` and the old ones back, then
+restores the registry. The journal `<dir>.raf-swap.json` (next to the folder) records the phase of
+step 4 until step 6 is done; a crash in between is undone by the next update run, which moves the
+old entries back from `<dir>.raf-old`. A half-done swap of 1.3.0 or older (`<dir>` missing,
+`<dir>.raf-old` present) is renamed back as before.
 
 Cost: an update needs the free space of a second install while it runs and takes as long as an
 install (3-20 minutes with HD textures, which are rebuilt from scratch every time).

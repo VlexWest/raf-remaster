@@ -7,7 +7,7 @@ Download: the release asset RaF-Remaster-Setup.exe, https only (http only for a 
 named in update.json), size checked against the API and a sanity range, sha256 from the asset
 RaF-Remaster-Setup.exe.sha256 or a "sha256: <hex>" line in the release text. No hash = no update.
 Install: the downloaded setup runs with --update <game dir> (raf_installer.run_update): it builds the
-new version into a sibling folder from the original game, swaps the folders, copies the player's
+new version into a sibling folder from the original game, swaps the folder contents, copies the player's
 own files over and only then deletes the old folder (rollback = the old folder, untouched until then).
 
 Per-install override <game>/.raf-remaster/update.json (optional):
@@ -500,17 +500,92 @@ def sibling(game: Path, suffix: str) -> Path:
     return game.parent / (game.name + suffix)
 
 
-def swap(game: Path, new: Path, old_bak: Path, rename=os.rename) -> None:
-    """game -> old_bak, new -> game. If the second rename fails the first is undone."""
-    rename(game, old_bak)
+# The swap moves the entries of the folders, never the game folder itself: an open handle on the
+# folder (an Explorer window, a shell or a scanner) makes renaming it fail with WinError 5, while its
+# entries still move. A journal next to the folder (<game>.raf-swap.json) records the phase, so a
+# crash in the middle is undone by recover_swap on the next run.
+def swap_journal(game: Path) -> Path:
+    return sibling(game, ".raf-swap.json")
+
+
+def _write_journal(game: Path, data: dict) -> None:
+    tmp = swap_journal(game).with_suffix(".tmp")
+    tmp.write_text(json.dumps(data))
+    os.replace(tmp, swap_journal(game))
+
+
+def _move_entries(src: Path, dst: Path, rename, names=None) -> None:
+    """Move the entries of src (or only `names`) into dst. On failure the moved ones go back."""
+    moved = []
     try:
-        rename(new, game)
+        for n in sorted(os.listdir(src)) if names is None else names:
+            if not os.path.lexists(src / n):
+                continue
+            rename(src / n, dst / n)
+            moved.append(n)
     except OSError:
-        rename(old_bak, game)
+        for n in reversed(moved):
+            os.rename(dst / n, src / n)
         raise
 
 
+def swap(game: Path, new: Path, old_bak: Path, rename=os.rename) -> None:
+    """Contents of game -> old_bak, contents of new -> game. On failure everything goes back."""
+    names_new = sorted(os.listdir(new))
+    _write_journal(game, {"phase": "out", "new": names_new})
+    old_bak.mkdir()
+    try:
+        _move_entries(game, old_bak, rename)
+    except OSError:
+        old_bak.rmdir()
+        swap_journal(game).unlink()
+        raise
+    _write_journal(game, {"phase": "in", "new": names_new})
+    try:
+        _move_entries(new, game, rename, names_new)
+    except OSError:
+        _move_entries(old_bak, game, os.rename)
+        old_bak.rmdir()
+        swap_journal(game).unlink()
+        raise
+    new.rmdir()
+    _write_journal(game, {"phase": "done", "new": names_new})
+
+
+def swap_done(game: Path) -> None:
+    """The update finished (files carried over, shortcuts written): the swap needs no undo anymore."""
+    swap_journal(game).unlink(missing_ok=True)
+
+
 def unswap(game: Path, failed: Path, old_bak: Path, rename=os.rename) -> None:
-    """Rollback after a swap: the new folder goes to `failed`, the old one back to its place."""
-    rename(game, failed)
-    rename(old_bak, game)
+    """Rollback after a swap: the new contents go to `failed`, the old ones back into game."""
+    failed.mkdir(exist_ok=True)
+    _move_entries(game, failed, rename)
+    _move_entries(old_bak, game, rename)
+    old_bak.rmdir()
+    swap_journal(game).unlink(missing_ok=True)
+
+
+def recover_swap(game: Path, new: Path, old_bak: Path, failed: Path) -> str:
+    """Undo a swap an earlier run left half done. Returns what was done ("" = nothing to do)."""
+    j = swap_journal(game)
+    if not j.exists():
+        if not game.exists() and old_bak.exists() and (old_bak / STATE_DIR).exists():
+            os.rename(old_bak, game)  # 1.3.0 and older swapped the folders themselves
+            return f"recovered {game} from {old_bak}"
+        return ""
+    try:
+        data = json.loads(j.read_text())
+    except (OSError, ValueError):
+        data = {}
+    phase = data.get("phase")
+    if not old_bak.exists():  # nothing of the old version was moved yet
+        j.unlink(missing_ok=True)
+        return f"dropped the journal of an earlier run (phase {phase}, nothing moved)"
+    if phase in ("in", "done"):  # game holds only entries of the new version: they go aside
+        failed.mkdir(exist_ok=True)
+        _move_entries(game, failed, os.rename)
+    _move_entries(old_bak, game, os.rename)  # phase "out": the rest of the old entries are still there
+    old_bak.rmdir()
+    j.unlink(missing_ok=True)
+    return f"undid a half-done swap (phase {phase}) of an earlier run"

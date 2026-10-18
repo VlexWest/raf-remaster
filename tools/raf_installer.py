@@ -28,7 +28,7 @@ UI languages: German, Russian, English (raf_installer_text.py), picked from the 
                            [--no-launch]
         update an existing remaster install (started by the launcher RaF Remaster.exe after the
         player clicked "Update now"): rebuilds from the original game remembered in
-        DIR/.raf-remaster/install.json into DIR.raf-update, swaps the folders, copies saves and own
+        DIR/.raf-remaster/install.json into DIR.raf-update, swaps the folder contents, copies saves and own
         files over, keeps the registry settings, then starts the game. Any failure before the old
         folder is deleted puts the previous version back. Exit 0 ok, 1 failed, 2 refused (game
         running, original not found, not a remaster install).
@@ -777,6 +777,24 @@ def _ps_quote(s) -> str:
     return "'" + str(s).replace("'", "''") + "'"
 
 
+def release_explorer(folder: Path) -> int:
+    """Explorer windows showing `folder` or a folder inside it hold a handle on it, so the update
+    cannot rename it (WinError 5). Navigate them to the parent folder. Returns how many moved."""
+    ps = "\n".join([
+        "$g = " + _ps_quote(Path(folder).resolve()), "$n = 0",
+        "foreach ($w in (New-Object -ComObject Shell.Application).Windows()) {",
+        "  try { $p = $w.Document.Folder.Self.Path } catch { continue }",
+        "  if ($p -and ($p -eq $g -or $p.StartsWith($g + '\\'))) { $w.Navigate((Split-Path $g)); $n++ }",
+        "}", "$n"])
+    enc = base64.b64encode(ps.encode("utf-16-le")).decode()
+    try:
+        r = subprocess.run([POWERSHELL, "-NoProfile", "-NonInteractive", "-EncodedCommand", enc],
+                           capture_output=True, timeout=20, creationflags=CREATE_NO_WINDOW)
+        return int(r.stdout.decode("ascii", "replace").strip() or 0)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0
+
+
 def make_shortcuts(links, workdir: Path) -> None:
     lines = ["$ErrorActionPreference = 'Stop'", "$sh = New-Object -ComObject WScript.Shell"]
     for lnk, target, args, icon in links:
@@ -1020,16 +1038,18 @@ class HeadlessUI:
         self.out("DONE: " + msg)
 
 
-def run_update(game, ui, bundle, cfg, relaunch="", launch=True, probe=None, running=None, rename=os.rename) -> int:
+def run_update(game, ui, bundle, cfg, relaunch="", launch=True, probe=None, running=None, rename=os.rename,
+               release=None) -> int:
     """Update the install `game` with this setup's version (see the module doc). Returns 0 updated,
     1 failed (previous version in place), 2 refused."""
     probe = probe or probe_gpu
     running = running or ru.game_running
+    release = release or release_explorer
     game = Path(game).resolve()
     new, old_bak, failed = ru.sibling(game, ".raf-update"), ru.sibling(game, ".raf-old"), ru.sibling(game, ".raf-failed")
-    if not game.exists() and old_bak.exists() and (old_bak / ".raf-remaster").exists():
-        rename(old_bak, game)  # an earlier update died between the two renames
-        ui.log(f"recovered {game} from {old_bak}")
+    done = ru.recover_swap(game, new, old_bak, failed)  # an earlier update died in the middle of the swap
+    if done:
+        ui.log(done)
     info = read_update_info(game)
     if info is None:
         ui.error(T("upd_no_info", d=game))
@@ -1071,11 +1091,18 @@ def run_update(game, ui, bundle, cfg, relaunch="", launch=True, probe=None, runn
         ui.error(T("upd_failed", msg=_msg(e), log=log_path()))
         return 1
     ui.step(T("step_swap"), None)
+    released = False
     while True:
         try:
             ru.swap(game, new, old_bak, rename)
             break
         except OSError as e:
+            if not released:  # an open Explorer window is the usual holder: move it away, retry once
+                released = True
+                moved = release(game)
+                ui.log(f"swap: {_msg(e)}; moved {moved} Explorer window(s) out of the folder")
+                time.sleep(1)
+                continue
             if ui.ask_retry(T("upd_in_use", msg=e)):
                 continue
             ins.restore_snapshot()
@@ -1088,6 +1115,7 @@ def run_update(game, ui, bundle, cfg, relaunch="", launch=True, probe=None, runn
         ru.carry_over(old_bak, game, ru.carry_plan(old_bak, game, info["_state"], new_state), log=ui.log)
         ins.dst = game
         ins.shortcuts_and_uninstall()
+        ru.swap_done(game)
     except BaseException as e:  # noqa: BLE001 - roll back: the old folder is still complete
         ui.log(traceback.format_exc())
         try:

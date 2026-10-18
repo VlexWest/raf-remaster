@@ -316,8 +316,53 @@ def check_carry(tmp: Path):
               "swap: second rename fails -> first undone, old install in place")
     ru.swap(a, b, c)
     check((a / "v").read_text() == "new" and (c / "v").read_text() == "old", "swap: new in place, old kept aside")
+    check(ru.swap_journal(a).exists() and not b.exists(), "swap: journal kept until the update is done")
     ru.unswap(a, tmp / "sw-failed", c)
-    check((a / "v").read_text() == "old" and (tmp / "sw-failed" / "v").read_text() == "new", "unswap: rollback")
+    check((a / "v").read_text() == "old" and (tmp / "sw-failed" / "v").read_text() == "new"
+          and not c.exists() and not ru.swap_journal(a).exists(), "unswap: rollback, journal removed")
+
+    # the game folder itself is held open (Explorer window): only its entries move, so the swap works
+    a, b, c = tmp / "sh-game", tmp / "sh-new", tmp / "sh-old"
+    for d, s in ((a, "old"), (b, "new")):
+        (d / "Data").mkdir(parents=True)
+        (d / "Data" / "x").write_text(s)
+        (d / "v").write_text(s)
+
+    def held(x, y):
+        if Path(x) == a:
+            raise PermissionError("[WinError 5] held open")
+        os.rename(x, y)
+
+    ru.swap(a, b, c, rename=held)
+    check((a / "v").read_text() == "new" and (a / "Data" / "x").read_text() == "new"
+          and (c / "Data" / "x").read_text() == "old" and not b.exists(), "swap: works while the folder itself is held open")
+    ru.swap_done(a)
+    check(not ru.swap_journal(a).exists(), "swap_done: journal removed")
+
+    # crash recovery from the journal
+    def crashed(name, phase, game_files, old_files, new_files):
+        g, n, o, fl = tmp / name, tmp / (name + ".raf-update"), tmp / (name + ".raf-old"), tmp / (name + ".raf-failed")
+        for d, files in ((g, game_files), (o, old_files), (n, new_files)):
+            if files is not None:
+                d.mkdir()
+                for k, v in files.items():
+                    (d / k).write_text(v)
+        ru._write_journal(g, {"phase": phase, "new": ["v", "w"]})
+        return g, n, o, fl, ru.recover_swap(g, n, o, fl)
+
+    g, n, o, fl, msg = crashed("rc-out", "out", {"w": "old"}, {"v": "old"}, {"v": "new", "w": "new"})
+    check(msg and sorted(os.listdir(g)) == ["v", "w"] and (g / "v").read_text() == "old" and not o.exists()
+          and not ru.swap_journal(g).exists(), "recover: crash while moving out, old entries back")
+    g, n, o, fl, msg = crashed("rc-in", "in", {"v": "new"}, {"v": "old", "w": "old"}, {"w": "new"})
+    check(msg and (g / "v").read_text() == "old" and (g / "w").read_text() == "old" and (fl / "v").read_text() == "new"
+          and not o.exists() and not ru.swap_journal(g).exists(), "recover: crash while moving in, old version back")
+    g, n, o, fl, msg = crashed("rc-done", "done", {"v": "new", "w": "new"}, {"v": "old", "w": "old"}, None)
+    check(msg and (g / "v").read_text() == "old" and (fl / "w").read_text() == "new" and not o.exists()
+          and not ru.swap_journal(g).exists(), "recover: crash during carry-over, old version back")
+    g, n, o, fl, msg = crashed("rc-none", "out", {"v": "old"}, None, {"v": "new"})
+    check(msg and (g / "v").read_text() == "old" and not ru.swap_journal(g).exists(),
+          "recover: journal without moved entries is dropped, install untouched")
+    check(ru.recover_swap(a, b, c, tmp / "sh-failed") == "", "recover: nothing to do without a journal")
 
 
 # ---------------------------------------------------------------- run_update with a fake installer
@@ -457,9 +502,29 @@ def check_run_update(tmp: Path):
         def locked(a, b):
             raise PermissionError("in use")
 
-        code = ri.run_update(g, ui, tmp / "bundle", cfg, probe=probe, running=lambda d: [], rename=locked)
+        released = []
+        code = ri.run_update(g, ui, tmp / "bundle", cfg, probe=probe, running=lambda d: [], rename=locked,
+                             release=lambda d: released.append(d) or 0)
+        check(released == [g.resolve()], "swap fails: Explorer windows released once before asking")
         check(code == 1 and (g / "RiseAndFall.exe").read_bytes() == b"MZold" and ("restore",) in log
               and not ru.sibling(g, ".raf-update").exists(), "swap fails: registry restored, new folder removed")
+
+        # swap blocked once (Explorer window), released, retried without asking
+        g, log, ui = fresh("u5b"), [], FakeUI()
+        ri.Installer = fake_installer_factory(log)
+        blocked = []
+
+        def once(a, b):
+            if not blocked:
+                blocked.append(a)
+                raise PermissionError("[WinError 5] held open")
+            os.rename(a, b)
+
+        code = ri.run_update(g, ui, tmp / "bundle", cfg, probe=probe, running=lambda d: [], rename=once,
+                             release=lambda d: 1, launch=False)
+        check(code == 0 and (g / "Users/default/save.sav").exists() and not any(s.startswith("ASK") for s in ui.lines)
+              and not ru.swap_journal(g).exists() and not ru.sibling(g, ".raf-old").exists(),
+              "swap blocked once: Explorer released, retried, updated without a question, no journal left")
 
         # failure after the swap -> rollback
         g, log, ui = fresh("u6"), [], FakeUI()

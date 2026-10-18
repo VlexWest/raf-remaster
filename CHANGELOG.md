@@ -6,6 +6,14 @@ Updating: start the game from the RaF Remaster shortcut & click "Update now", or
 
 Multiplayer: where a version says "fingerprint changes", every player of a network game needs that version.
 
+## 1.3.1 - 2026-10-18
+
+### Fixed
+
+- "Update now" failed with "Access denied" (WinError 5) when the remaster folder was open in Explorer or held by another program. The update now moves the folder's contents instead of renaming the folder itself & switches Explorer windows showing it to the parent folder.
+
+Fingerprint unchanged.
+
 ## 1.3.0 - 2026-10-18
 
 ### Added
