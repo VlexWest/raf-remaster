@@ -6,6 +6,14 @@ Updating: start the game from the RaF Remaster shortcut & click "Update now", or
 
 Multiplayer: where a version says "fingerprint changes", every player of a network game needs that version.
 
+## 1.3.2 - 2026-10-18
+
+### Changed
+
+- The launcher checks for updates on every start (before: at most every 6 hours). "Update now" always installs the newest version.
+
+Fingerprint unchanged.
+
 ## 1.3.1 - 2026-10-18
 
 ### Fixed

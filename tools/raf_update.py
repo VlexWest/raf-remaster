@@ -1,7 +1,7 @@
 """Update logic shared by the launcher (raf_launcher.py) and the installer's update mode.
 
-Release check: GET https://api.github.com/repos/<repo>/releases/latest (3 s timeout), result cached in
-<game>/.raf-remaster/update-cache.json for 6 h (1 h after a failed check). A private repository or a
+Release check: GET https://api.github.com/repos/<repo>/releases/latest (3 s timeout) on every launcher
+start, result recorded in <game>/.raf-remaster/update-cache.json. A private repository or a
 missing release answers 404/403: that is "no update", silently, like being offline.
 Download: the release asset RaF-Remaster-Setup.exe, https only (http only for a loopback test server
 named in update.json), size checked against the API and a sanity range, sha256 from the asset
@@ -40,8 +40,6 @@ LAUNCHER_EXE = "RaF Remaster.exe"
 LAUNCHER_DIR = ".raf-launcher"  # PyInstaller contents directory of the launcher
 GAME_EXE = "RiseAndFall.exe"
 API_TEMPLATE = "https://api.github.com/repos/{repo}/releases/latest"
-CHECK_EVERY = 6 * 3600
-RETRY_AFTER_ERROR = 3600
 SNOOZE = 6 * 3600
 TIMEOUT = 3.0
 MIN_SIZE, MAX_SIZE = 5_000_000, 1_000_000_000
@@ -184,15 +182,12 @@ def fetch_latest(url: str, timeout: float = TIMEOUT, test: bool = False):
 
 
 def check(game: Path, now=None, force=False, fetch=fetch_latest, override=None) -> dict:
-    """{"release": dict|None, "source": "cache"|"net", "error": str|None}. Uses the cache while it
-    is fresh (6 h, 1 h after an error); force ignores it. Never raises."""
+    """{"release": dict|None, "source": "net", "error": str|None}. Asks GitHub on every call, so
+    "Update now" always gets the newest release; the result is only recorded in the cache file.
+    `force` (--check-updates) changes nothing here, only what the launcher shows. Never raises."""
     now = time.time() if now is None else now
     override = load_override(game) if override is None else override
     cache = read_cache(game)
-    age = now - float(cache.get("checked", 0) or 0)
-    fresh = CHECK_EVERY if not cache.get("error") else RETRY_AFTER_ERROR
-    if not force and "checked" in cache and 0 <= age < fresh:
-        return {"release": cache.get("release"), "source": "cache", "error": cache.get("error")}
     try:
         rel, err = fetch(api_url(override), timeout=TIMEOUT, test=override.get("test", False)), None
     except UpdateError as e:

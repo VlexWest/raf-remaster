@@ -54,8 +54,9 @@ repository (or at least its releases) is public.
 
 ## What the player sees
 
-- Launcher start: at most one API request per 6 hours (1 hour after a failed one), 3 s timeout, cached
-  in `<game>/.raf-remaster/update-cache.json`. Offline, 403/404 or any error: the game just starts.
+- Launcher start: one API request on every start (3 s timeout), so "Update now" always gets the
+  newest release. The result is recorded in `<game>/.raf-remaster/update-cache.json`. Offline,
+  403/404 or any error: the game just starts.
 - Newer release: dialog "Version X available (installed Y)", the release notes, installed version +
   gameplay fingerprint, buttons **Update now / Later / Skip this version** (Later = ask again after
   6 h, Skip = never for this version). Language from the install (ru/de/en).

@@ -119,17 +119,15 @@ def check_cache_and_offer(tmp: Path):
     r = ru.check(game, now=1000, fetch=fetch_ok, override=ov)
     check(r["source"] == "net" and r["release"]["tag"] == "v1.0.1" and calls == [ru.API_TEMPLATE.format(
         repo="VlexWest/raf-remaster")], "first check goes to the GitHub API of VlexWest/raf-remaster")
-    r = ru.check(game, now=1000 + 5 * 3600, fetch=fetch_ok, override=ov)
-    check(r["source"] == "cache" and len(calls) == 1, "second check within 6 h uses the cache (rate limit)")
-    r = ru.check(game, now=1000 + 6 * 3600 + 1, fetch=fetch_off, override=ov)
-    check(r["source"] == "net" and r["error"] and r["release"] is None and len(calls) == 2,
-          "after 6 h it asks again; offline -> error, no release")
-    r = ru.check(game, now=1000 + 6 * 3600 + 1800, fetch=fetch_off, override=ov)
-    check(r["source"] == "cache" and len(calls) == 2, "after an error: no new try within 1 h")
-    r = ru.check(game, now=1000 + 6 * 3600 + 3601, fetch=fetch_ok, override=ov)
-    check(r["source"] == "net" and r["release"], "after an error: new try after 1 h")
-    r = ru.check(game, now=1000 + 6 * 3600 + 3602, fetch=fetch_ok, override=ov, force=True)
-    check(r["source"] == "net" and len(calls) == 4, "force ignores the cache")
+    r = ru.check(game, now=1060, fetch=fetch_ok, override=ov)
+    check(r["source"] == "net" and len(calls) == 2, "second check a minute later asks again (no cache)")
+    r = ru.check(game, now=1120, fetch=fetch_off, override=ov)
+    check(r["source"] == "net" and r["error"] and r["release"] is None and len(calls) == 3,
+          "offline -> error, no release")
+    r = ru.check(game, now=1180, fetch=fetch_ok, override=ov)
+    check(r["source"] == "net" and r["release"] and len(calls) == 4, "after an error the next start asks again")
+    r = ru.check(game, now=1240, fetch=fetch_ok, override=ov, force=True)
+    check(r["source"] == "net" and len(calls) == 5, "force asks too")
 
     def boom(url, timeout, test):
         raise ValueError("weird")
@@ -709,7 +707,8 @@ def check_launcher(tmp: Path):
               "launcher: API 404 -> game starts with the arguments, no dialog")
         n_hits = len(srv.hits)
         launch()
-        check(len(srv.hits) == n_hits and len(dry.read_text().splitlines()) == 2, "launcher: second start uses the cache")
+        check(len(srv.hits) == n_hits + 1 and len(dry.read_text().splitlines()) == 2,
+              "launcher: every start asks GitHub again")
         # newer release, player says Later via the dialog stub
         payload = os.urandom(5_100_000)
         srv.routes["/latest"] = (200, release_json(srv.url, size=len(payload)), {})

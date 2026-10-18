@@ -2,7 +2,7 @@
 PyInstaller onedir with the contents folder .raf-launcher next to the exe).
 
     RaF Remaster.exe [game arguments]      e.g. -hostgame "Name" -playername "Me" -pid "1" -pass "raf"
-    RaF Remaster.exe --check-updates       check now (ignores the 6 h cache), also says "up to date"
+    RaF Remaster.exe --check-updates       check now, also says "up to date"
     RaF Remaster.exe --skip-check [args]   start the game without a check (used after an update)
 Unfrozen (tests): python tools/raf_launcher.py --game <dir> [...]
 
