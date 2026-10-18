@@ -6,6 +6,19 @@ Updating: start the game from the RaF Remaster shortcut & click "Update now", or
 
 Multiplayer: where a version says "fingerprint changes", every player of a network game needs that version.
 
+## 1.3.0 - 2026-10-18
+
+### Added
+
+- The AI attacks together with its allies (feature "ally-attack", on by default). An AI player joins the enemy that one of its AI allies is attacking right now. Human allies are not followed yet.
+- The AI only sends ships with cargo (feature "naval-ai", on by default). Ferries no longer sail empty when the loading time runs out, the AI asks idle units to board on Easy too, & ferries are allowed after 15 instead of 45 minutes.
+
+### Fixed
+
+- The AI picks its attack target by the intended weights (feature "attack-choice-fix", on by default): 70 % the closest enemy, 20 % a resource target, 10 % revenge. Before, it always attacked the closest enemy.
+
+Fingerprint changes.
+
 ## 1.2.0 - 2026-10-17
 
 ### Added
