@@ -5,5 +5,5 @@ the launcher compares it with the tag of the latest GitHub release (vX.Y.Z).
 UPDATE_REPO can be overridden per install in <game>/.raf-remaster/update.json ({"repo": "owner/name"}).
 """
 
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 UPDATE_REPO = "VlexWest/raf-remaster"
