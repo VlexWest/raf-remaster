@@ -164,6 +164,10 @@ def expected_fingerprint(stock: Path) -> str:
         h.update(rp.ALLY_ATTACK_MARK)
     if "attack-choice-fix" in FEATURES:
         h.update(rp.ATTACK_CHOICE_FIX_MARK)
+    if "trigger-signed-compare" in FEATURES:
+        h.update(rp.TRIGGER_SIGNED_COMPARE_MARK)
+    if "trigger-resource-floor" in FEATURES:
+        h.update(rp.TRIGGER_RESOURCE_FLOOR_MARK)
     return h.hexdigest()[:12]
 
 

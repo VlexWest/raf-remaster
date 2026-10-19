@@ -26,6 +26,10 @@ Features (see FEATURES; `features` prints them with their default):
   ally-attack                          AI joins the attack target of its AI allies (exe patch, gameplay)
   attack-choice-fix                    AI attack choice follows the Close/Resource/Revenge percentages
                                        (exe patch, gameplay: changes the fingerprint)
+  trigger-signed-compare               scenario "player has resource" conditions see negative gold/wood
+                                       as negative (exe patch, gameplay: changes the fingerprint)
+  trigger-resource-floor               scenario "subtract resource" effects stop at 0 for gold, wood,
+                                       glory & recruitment points (exe patch, gameplay)
   lang-en                              English language pack (needs work/lang/en.json, not in the repo)
   credits, menu-credit                 credits roll, Language.dll lines, splash credit; menu-credit
                                        adds the main menu corner line + splash bar (needs credits)
@@ -252,6 +256,44 @@ ALLY_ATTACK = [
 ATTACK_CHOICE_FIX = [
     (EXE, 0x00CE3F6C, "00" * 17, "0000c842ff15c0a3c400d80d6c3fce00c3", "attack choice cave (17 bytes)"),
     (EXE, 0x004CF143, "ff15c0a3c400", "e8284e810090", "attack choice roll x100"),
+]
+
+# Feature `trigger-signed-compare` (docs/scenario-format.md 3.7): the scenario condition PlayerHasResource
+# (FUN_008aabc0) compares through FUN_008a9c90 with unsigned setb/setbe/setae/seta, so a negative gold or
+# wood balance passed "gold >= 900" (Gaugamela: computers got 600 gold every few seconds & could win the
+# 5000 gold + wood hoard while in debt). Its three calls go to a cave that compares signed for resource
+# ids 0..6 (random, total, recruitment points, gold, wood, glory) and jumps to the stock helper for all
+# others: the campaign medal score Var4 (resource 15) relies on the unsigned compare ("Var4 < 0" is
+# written as "Var4 > 100000"). Integer compares only. Simulation path: fingerprint() mixes in
+# TRIGGER_SIGNED_COMPARE_MARK while installed. Generated and tested offline by tools/test_trigger_fixes.py
+# (cave 0xCE3F88..0xCE3FDA, after the stray dword 0xCE3F81).
+TRIGGER_SIGNED_COMPARE = [
+    (EXE, 0x00CE3F88, "00" * 83,
+     "837944060f87fe5cbcff8b4c24088b4424048b54240c85c9741149741649741b49742049742532c0c20c003bc20f9cc0"
+     "c20c003bc20f9ec0c20c003bc20f94c0c20c003bc20f9dc0c20c003bc20f9fc0c20c00",
+     "signed compare cave (83 bytes)"),
+    (EXE, 0x008AACA5, "e8e6efffff", "e8de924300", "PlayerHasResource: compare via the cave"),
+    (EXE, 0x008AACC4, "e8c7efffff", "e8bf924300", "PlayerHasResource: compare via the cave"),
+    (EXE, 0x008AACF3, "e898efffff", "e890924300", "PlayerHasResource: compare via the cave"),
+]
+
+# Feature `trigger-resource-floor` (docs/scenario-format.md 3.7): ChangeResourceLevel (FUN_00bfa1e0) writes
+# old + (-amount) for op 2 (subtract) without a floor, so triggers drove gold negative (Gaugamela takes
+# 250 gold from every computer). The `mov reg,[player+x]; add reg,edi` of recruitment points, gold, wood
+# and glory become `call cave; nop x3`; each cave adds and writes 0 when op (ebx) is 2 and the result is
+# negative. Set, add and every other resource (pop cap, Var0..Var9) stay stock. Integer only. Simulation
+# path: fingerprint() mixes in TRIGGER_RESOURCE_FLOOR_MARK while installed. Tested offline by
+# tools/test_trigger_fixes.py (caves 0xCE3820..0xCE3867, below click-fix).
+TRIGGER_RESOURCE_FLOOR = [
+    (EXE, 0x00CE3820, "00" * 72,
+     "8b8eec0f000003cf790783fb02750233c9c38b96f00f000003d7790783fb02750233d2c38b86e80f000003c7790783fb"
+     "02750233c0c38b8ef40f000003cf790783fb02750233c9c3",
+     "resource floor caves (72 bytes)"),
+    (EXE, 0x00BFA2C2, "8b8eec0f000003cf", "e859950e00909090",
+     "ChangeResourceLevel recruitment points: subtract stops at 0"),
+    (EXE, 0x00BFA2FC, "8b96f00f000003d7", "e831950e00909090", "ChangeResourceLevel gold: subtract stops at 0"),
+    (EXE, 0x00BFA334, "8b86e80f000003c7", "e80b950e00909090", "ChangeResourceLevel wood: subtract stops at 0"),
+    (EXE, 0x00BFA36C, "8b8ef40f000003cf", "e8e5940e00909090", "ChangeResourceLevel glory: subtract stops at 0"),
 ]
 
 # Addresses are for the v1.15 (08.18.2006) files; every patch checks the original bytes first.
@@ -696,6 +738,8 @@ FEATURES = {
     "naval-ai": True,  # AI ferries only with troops aboard (exe, docs/ai-naval.md)
     "ally-attack": True,  # AI joins its AI allies' attack target (exe, docs/ai-coop.md)
     "attack-choice-fix": True,  # attack choice roll x100 against the 70/20/10 weights (exe, docs/ai-coop.md)
+    "trigger-signed-compare": True,  # PlayerHasResource compares gold/wood signed (exe, docs/scenario-format.md)
+    "trigger-resource-floor": True,  # ChangeResourceLevel subtract stops at 0 (exe, docs/scenario-format.md)
 }
 # The autodetect does not know the GPU and leaves every quality at 0 ("Низко"); 3 = "Ультра".
 # The shader upgrade only shows with the higher techniques.
@@ -879,6 +923,10 @@ def fingerprint(game: Path) -> str:
         h.update(ALLY_ATTACK_MARK)
     if attack_choice_fix_installed(game):
         h.update(ATTACK_CHOICE_FIX_MARK)
+    if trigger_signed_compare_installed(game):
+        h.update(TRIGGER_SIGNED_COMPARE_MARK)
+    if trigger_resource_floor_installed(game):
+        h.update(TRIGGER_RESOURCE_FLOOR_MARK)
     return h.hexdigest()[:12]
 
 
@@ -941,6 +989,34 @@ def attack_choice_fix_installed(game: Path) -> bool:
         return False
     data = exe.read_bytes()
     for _, va, _old, new, _ in ATTACK_CHOICE_FIX:
+        off = pe_va_to_offset(data, va)
+        if data[off:off + len(new) // 2].hex() != new:
+            return False
+    return True
+
+
+TRIGGER_SIGNED_COMPARE_MARK = (b"exe:trigger-signed-compare\0"
+                               + hashlib.sha256(b"".join(bytes.fromhex(p[3]) for p in TRIGGER_SIGNED_COMPARE)).digest())
+
+
+def trigger_signed_compare_installed(game: Path) -> bool:
+    return _patches_installed(game, TRIGGER_SIGNED_COMPARE)
+
+
+TRIGGER_RESOURCE_FLOOR_MARK = (b"exe:trigger-resource-floor\0"
+                               + hashlib.sha256(b"".join(bytes.fromhex(p[3]) for p in TRIGGER_RESOURCE_FLOOR)).digest())
+
+
+def trigger_resource_floor_installed(game: Path) -> bool:
+    return _patches_installed(game, TRIGGER_RESOURCE_FLOOR)
+
+
+def _patches_installed(game: Path, patches) -> bool:
+    exe = game / EXE
+    if not exe.is_file():
+        return False
+    data = exe.read_bytes()
+    for _, va, _old, new, _ in patches:
         off = pe_va_to_offset(data, va)
         if data[off:off + len(new) // 2].hex() != new:
             return False
@@ -1025,6 +1101,8 @@ def apply(game: Path, only=None, skip=None, stock=None, rebuild=False, mutator=N
     byte_patches(game, NAVAL_AI, "naval-ai" in feats, "naval-ai")
     byte_patches(game, ALLY_ATTACK, "ally-attack" in feats, "ally-attack")
     byte_patches(game, ATTACK_CHOICE_FIX, "attack-choice-fix" in feats, "attack-choice-fix")
+    byte_patches(game, TRIGGER_SIGNED_COMPARE, "trigger-signed-compare" in feats, "trigger-signed-compare")
+    byte_patches(game, TRIGGER_RESOURCE_FLOOR, "trigger-resource-floor" in feats, "trigger-resource-floor")
     byte_patches(game, SMOOTH_SCROLL, "smooth-scroll" in feats, "smooth-scroll")
     byte_patches(game, ZOOM_PAST_ONE, False, "zoom past 1.0 (old)")
     zoom_given = zoom is not None
@@ -1158,7 +1236,7 @@ def main() -> None:
             args.append(a)
     if args == ["features"]:
         for f, on in FEATURES.items():
-            print(f"{f:17s} {'default on' if on else 'default off'}")
+            print(f"{f:22s} {'default on' if on else 'default off'}")
         return
     if len(args) != 2 or args[0] not in ("apply", "revert", "status"):
         sys.exit(__doc__)

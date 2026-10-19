@@ -221,6 +221,34 @@ Create): 0 Gaia, 1 one random human, 2 one random computer, 3 all humans, 4 all 
 | AIToggleSetting setting | 0 computer player on/off (calls FUN_0046ae30, which Victory/Defeat also call to stop a defeated AI), 1-7 single AI managers (build = 4) |
 | Counter (5,6) | title, seconds, count down, title only, mode (0 show, 1 pause, 2 resume, else remove), progress text, progress bar |
 
+### 3.7 Resource compare & subtract (exe fixes)
+
+PlayerHasResource is evaluated by `FUN_008aabc0` (vtable 0xc6eb10): value = `FUN_008aa9b0(player,
+resource [cond+0x44])`, compared with the amount (or another player's value when the bool is set) by
+`FUN_008a9c90(value, op [cond+0x50], amount)`, op 0 `<`, 1 `<=`, 2 `==`, 3 `>=`, 4 `>`. The helper
+uses unsigned setb/setbe/setae/seta and has no other caller than the three calls in the evaluator.
+
+ChangeResourceLevel ends in `FUN_00bfa1e0(player, resource, op, amount)`: op 2 negates the amount
+and writes old + (-amount) through `FUN_007a7920` with no floor. Together this broke stock
+Gaugamela: a trigger takes 250 gold from all computers when a random computer has >= 900, the
+balance goes negative, the negative balance passes ">= 900 / 1000 / 5000" as a huge unsigned number,
+so computers got 600 free gold every few seconds & could win the 5000 gold + wood hoard in debt.
+
+Two patches in `tools/raf_patch.py`, both on by default & in the fingerprint, tested by
+`tools/test_trigger_fixes.py` (static checks, unicorn emulation of the caves & of the whole
+`FUN_00bfa1e0`, apply / revert):
+
+| feature | change |
+|---|---|
+| `trigger-signed-compare` | the three helper calls (0x8aaca5, 0x8aacc4, 0x8aacf3) go to a cave at 0xCE3F88..0xCE3FDA: resource ids 0..6 (random, total, recruitment points, gold, wood, glory) compare signed (setl/setle/sete/setge/setg), all other ids jump to the stock helper |
+| `trigger-resource-floor` | the `mov reg,[player+x]; add reg,edi` of resources 2, 3, 4, 6 (0xbfa2c2, 0xbfa2fc, 0xbfa334, 0xbfa36c) call caves at 0xCE3820..0xCE3867 that write 0 when op is 2 & the result is negative |
+
+Resources above 6 stay unsigned on purpose: the campaign medal score Var4 (resource 15) is a
+difference that can go negative, & the campaign tests it with a condition named "P1 Var4 < 0" that
+is written as "Var4 > 100000", which only works unsigned. Variables, pop cap, set & add are not
+clamped. Our co-op & survival maps only compare non-negative values (wave counter, flags, P1 gold >=
+300 / 800 before a tithe), so they behave as before.
+
 ## 4. Writing scenarios
 
 `raf_scn.ScnFile` (chunks, header, trailer) + `Manager.parse/serialize` round-trip losslessly.

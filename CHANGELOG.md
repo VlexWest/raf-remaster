@@ -6,6 +6,15 @@ Updating: start the game from the RaF Remaster shortcut & click "Update now", or
 
 Multiplayer: where a version says "fingerprint changes", every player of a network game needs that version.
 
+## 1.3.3
+
+### Fixed
+
+- Scenario conditions like "computer has at least 900 gold" no longer count a negative balance as a huge one (feature "trigger-signed-compare", on by default). On Gaugamela the computers got 600 free gold every few seconds & could win the 5000 gold + wood hoard while in debt.
+- Scenario effects that take resources away stop at 0 for gold, wood, glory & recruitment points (feature "trigger-resource-floor", on by default). Gaugamela took 250 gold from every computer & drove them into debt.
+
+Fingerprint changes.
+
 ## 1.3.2 - 2026-10-18
 
 ### Changed

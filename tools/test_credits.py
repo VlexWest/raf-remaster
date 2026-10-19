@@ -38,7 +38,7 @@ if "--preview" in args:
     del args[i:i + 2]
 GAME = Path(args[0] if args else "D:/Games/Rise and Fall")
 LANG_EN = REPO / "work" / "overlay-lang-en" / "Language.dll"
-FINGERPRINT = "b3d0e1457ce0"  # release set (tools/build_installer.py FEATURES)
+FINGERPRINT = "852e567f40fd"  # release set (tools/build_installer.py FEATURES)
 FAILED = []
 logging.getLogger("fontTools").setLevel(logging.ERROR)
 

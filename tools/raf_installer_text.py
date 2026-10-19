@@ -306,4 +306,9 @@ TEXT = {
                       "en": "AI: attacks with its allies"},
     "f_attack-choice-fix": {"de": "KI: Zielwahl nach Gewichtung", "ru": "ИИ: выбор цели атаки по весам",
                             "en": "AI: weighted attack choice"},
+    "f_trigger-signed-compare": {"de": "Szenarien: Schulden zählen als Schulden",
+                                 "ru": "сценарии: долг считается долгом",
+                                 "en": "scenarios: debt counts as debt"},
+    "f_trigger-resource-floor": {"de": "Szenarien: Abzug nur bis 0", "ru": "сценарии: списание только до 0",
+                                 "en": "scenarios: deductions stop at 0"},
 }
