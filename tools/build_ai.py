@@ -80,6 +80,26 @@ PATCHES = {
     "Helicopter Transport.tai": [
         ('#include("transport.tai")', L('#include("transport.tai")', *TRANSPORT_BLOCK)),
     ],
+    "Medic Surgeon.tai": [
+        # FIX 3: medic keeps healing; the stock HealUnit override dropped the patient whenever an enemy was visible
+        (L("HealUnit\t\t ", "{", "\tCanISeeEnemy true(CheckRange)", "}", "", ""), ""),
+    ],
+    "Bomber.tai": [
+        # FIX 4: UnitDestroyed has no handler in the unit trigger table, so bombers never picked a secondary target
+        ("allof(GoalIsUnit,UnitDestroyed) true(SearchForSecondaryTarget)",
+         "allof(GoalIsUnit,EnemyUnitDestroyed) true(SearchForSecondaryTarget)"),
+    ],
+    "Horse Archer.tai": [
+        # FIX 5: horse archers step back from melee attackers on auto-acquired targets (same flee gate as air units)
+        ('#include("Generic Attack.tai")',
+         L("// horse archers kite melee attackers instead of trading blows",
+           "AttackEnemyUnit",
+           "{",
+           "\tallof(AttackerIsMeleeUnit,GoalIsNotPlayerInitiated,CanFlee) true(RunFromAttacker)",
+           "}",
+           "",
+           '#include("Generic Attack.tai")')),
+    ],
 }
 
 

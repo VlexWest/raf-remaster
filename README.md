@@ -23,7 +23,7 @@ See the [changelog](CHANGELOG.md) for what changed in each version.
 ### ⚔️ Gameplay & AI
 
 - A harder Hard AI with its own personality per civilization
-- Smarter unit AI for artillery & transports
+- Smarter unit AI for artillery, transports, medics, bombers & horse archers
 - Smarter archer targeting: ranged units prefer siege engines, then archers, then heroes. Guard stance is an anti-siege mode
 - The AI attacks together with its AI allies & picks its targets by the intended weights
 - The AI only sends ships with troops on board & starts using ferries earlier
