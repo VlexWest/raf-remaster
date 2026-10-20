@@ -6,6 +6,20 @@ Updating: start the game from the RaF Remaster shortcut & click "Update now", or
 
 Multiplayer: where a version says "fingerprint changes", every player of a network game needs that version.
 
+## 1.4.0 - 2026-10-20
+
+### Added
+
+- Horse archers step back from melee attackers & keep shooting instead of trading blows. Only when you did not order the attack yourself.
+
+### Fixed
+
+- Archers on walls ignored spearmen at the wall while any enemy archer or siege engine was in range, & all of them shot at the same target. Ranged units now spread their fire: once 3 units aim at a target, the next ones pick another one. Siege engines still get everyone's fire first, then archers, then the rest.
+- Medics stopped healing as soon as an enemy came into sight.
+- Bombers never picked a second target after destroying the first one.
+
+Fingerprint changes.
+
 ## 1.3.3 - 2026-10-19
 
 ### Fixed
