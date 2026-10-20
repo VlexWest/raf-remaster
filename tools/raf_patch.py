@@ -181,38 +181,41 @@ CLICK_FIX = [
 # Feature `target-priority` (docs/ai.md 1.4): ranged units (dbaiunittargeting class Short/Long) score
 # siege > archers > heroes above the rest; in weapon range the bonus stays below the in-range term
 # (Short 25/18/10 < 30, Long 40/25/15 < 50), out of range it is small (8/6/3, 12/8/5). Stance Guard:
-# in-range siege +75. Hooks the in-range block and the end of the score sum of the unit scan
-# FUN_00a8c8c0, the grid scan FUN_00a92810 and the formation chooser FUN_00935fa0; the two scans stop
-# at Short 100 / Long 125 instead of 15 (exe, not the .dat: FUN_00557450 also weighs goals with that
-# value). Integer adds only. Simulation path; the exe is not a gameplay file, so fingerprint() mixes in
-# TARGET_PRIORITY_MARK while it is installed. Generated and tested offline by tools/test_target_priority.py
-# (tables 0xCE3C00..0xCE3C87, code 0xCE3C90..0xCE3E53).
+# in-range siege +75. Fire spreading (RAF-10): an in-range candidate gets +50 unless 3 or more goals of
+# other units already aim at it ([unit+0x858], the stock stop rule's counter; the attacker's own goal,
+# found with the stock EEUGAttackUnit cast, does not count); siege always gets it. Hooks the in-range
+# block and the end of the score sum of the unit scan FUN_00a8c8c0, the grid scan FUN_00a92810 and the
+# formation chooser FUN_00935fa0; the two scans stop at Short 155 / Long 175 instead of 15 (exe, not the
+# .dat: FUN_00557450 also weighs goals with that value). Integer adds only. Simulation path; the exe is
+# not a gameplay file, so fingerprint() mixes in TARGET_PRIORITY_MARK while it is installed. Generated and
+# tested offline by tools/test_target_priority.py (tables 0xCE3C00..0xCE3C87, code 0xCE3C90..0xCE3E85).
 TARGET_PRIORITY = [
     (EXE, 0x00CE3C00, "00" * 136,
-     "0000000000080603000c08050000000000110c07001c110a0000000000430c07003f110a00647d000000000000000000"
+     "0000000000080603000c08050000000000110c07001c110a0000000000430c07003f110a009baf000000000000000000"
      "030000000000020000000000000000000000000000020101000000000000000000000000000000000000000000000200"
      "00010000000001010001000001000000000000000000000000000000000000000000000000000000",
      "target priority tables (136 bytes)"),
-    (EXE, 0x00CE3C90, "00" * 452,
+    (EXE, 0x00CE3C90, "00" * 502,
      "8b829000000085c074138b802002000083f86073080fb680283cce00c333c0c38b1504f0d20085c0740e85d2740a8b80"
-     "240600003b4208c383ca01c383fa02770d0fb692243cce0085d274028bc2c38b56588b04930368088b4e5883f9027728"
-     "8bd7e899ffffff8d0488508b4624e8adffffff5875090fb690183cce00eb070fb6900c3cce0003eae95a8fdaff03e883"
-     "c4048b4e5883f90277118bd7e85fffffff0fb68488003cce0003e8e9ea8fdaff8b1560c9d2008b45148b0c820371088b"
-     "4d1483f90277278bd7e832ffffff8d0488508bc3e847ffffff5875090fb690183cce00eb070fb6900c3cce0003f2e96d"
-     "efdaff03f083c4048b4d1483f90277118bd7e8f9feffff0fb68488003cce0003f0e9e5efdaff8b47688b0d60c9d2008b"
-     "1481035a088b4f6883f90277278bd6e8ccfeffff8d0488508bc5e8e1feffff5875090fb690183cce00eb070fb6900c3c"
-     "ce0003dae9ba24c5ff83c40403d88b4f6883f90277118bd6e893feffff0fb68488003cce0003d8e94925c5ff8b5658a1"
-     "60c9d2008b0c908b4124e8adfeffff3be80f8c7d8fdaffe9748fdaff8b4d14a160c9d2008b14888b42248bd1e88bfeff"
-     "ff3bf0897df48975d80f8d88efdaffe974efdaff",
-     "target priority cave (452 bytes)"),
-    (EXE, 0x00A8CC6E, "8b56588b0493036808", "e96c70250090909090", "unit scan: in-range bonus"),
-    (EXE, 0x00A8CD25, "03e883c404", "e9f36f2500", "unit scan: family tier bonus"),
-    (EXE, 0x00A92CE1, "8b1560c9d2008b45148b0c82037108", "e95a10250090909090909090909090", "grid scan: in-range bonus"),
-    (EXE, 0x00A92D86, "03f083c404", "e9f80f2500", "grid scan: family tier bonus"),
-    (EXE, 0x00936294, "8b47688b0d60c9d2008b1481035a08", "e90ddb3a0090909090909090909090", "formation: in-range bonus"),
-    (EXE, 0x00936350, "83c40403d8", "e994da3a00", "formation: family tier bonus"),
-    (EXE, 0x00A8CD90, "a160c9d200", "e977702500", "unit scan: stop threshold"),
-    (EXE, 0x00A92DA5, "a160c9d200", "e982102500", "grid scan: stop threshold"),
+     "240600003b4208c383ca01c383fa02770d0fb692243cce0085d274028bc2c3e8acffffff8d0488508b44240ce8bfffff"
+     "ff5875090fb690183cce00eb070fb6900c3cce00e35683e0033c01744c8b4c2404e34683b95808000003723d8b442408"
+     "773a85c0743652516a00685c8ece00689c81ce006a00ffb008060000e8550bf5ff83c414595a85c074128b404085c074"
+     "0b398894000000750383c232c208008b56588b04930368088b4e5883f902770d8bd7ff762457e864ffffff03eae9f58e"
+     "daff03e883c4048b4e5883f90277118bd7e8fafeffff0fb68488003cce0003e8e9858fdaff8b1560c9d2008b45148b0c"
+     "820371088b4d1483f90277108bd753ffb794000000e815ffffff03f2e91fefdaff03f083c4048b4d1483f90277118bd7"
+     "e8abfeffff0fb68488003cce0003f0e997efdaff8b47688b0d60c9d2008b1481035a088b4f6883f902770b8bd65556e8"
+     "cbfeffff03dae98824c5ff83c40403d88b4f6883f90277118bd6e861feffff0fb68488003cce0003d8e91725c5ff8b56"
+     "58a160c9d2008b0c908b4124e87bfeffff3be80f8c4b8fdaffe9428fdaff8b4d14a160c9d2008b14888b42248bd1e859"
+     "feffff3bf0897df48975d80f8d56efdaffe942efdaff",
+     "target priority cave (502 bytes)"),
+    (EXE, 0x00A8CC6E, "8b56588b0493036808", "e9ec70250090909090", "unit scan: in-range bonus"),
+    (EXE, 0x00A8CD25, "03e883c404", "e958702500", "unit scan: family tier bonus"),
+    (EXE, 0x00A92CE1, "8b1560c9d2008b45148b0c82037108", "e9bf10250090909090909090909090", "grid scan: in-range bonus"),
+    (EXE, 0x00A92D86, "03f083c404", "e946102500", "grid scan: family tier bonus"),
+    (EXE, 0x00936294, "8b47688b0d60c9d2008b1481035a08", "e95bdb3a0090909090909090909090", "formation: in-range bonus"),
+    (EXE, 0x00936350, "83c40403d8", "e9c6da3a00", "formation: family tier bonus"),
+    (EXE, 0x00A8CD90, "a160c9d200", "e9a9702500", "unit scan: stop threshold"),
+    (EXE, 0x00A92DA5, "a160c9d200", "e9b4102500", "grid scan: stop threshold"),
 ]
 
 # Feature `naval-ai` (docs/ai-naval.md section 6, RAF-9: the AI sends no ships or empty ships).

@@ -18,6 +18,8 @@ The patch adds a family tier bonus for ranged classes (Short/Long; Melee keeps t
   T_ALL: added to every candidate; T_IN: added on top when the candidate is in weapon range;
   T_IN_G replaces T_IN when the attacker's stance (unit+0x624, pointer into the dbunitbehavior
   vector [0xD2F004]) is Guard (index 2): in-range siege then beats everything else.
+  Fire spreading (RAF-10): an in-range candidate gets FREE on top unless 3+ goals of other units
+  already aim at it ([unit+0x858]; the attacker's own goal does not count); siege always gets it.
   The early stop threshold of Short/Long rises to STOP so the scan sees every candidate (a Guard
   unit still stops at the first in-range siege). Integer adds only, no floats, no randomness.
 
@@ -69,21 +71,32 @@ FAMILIES = {30: SIEGE, 31: SIEGE, 57: SIEGE, 62: SIEGE, 63: SIEGE, 65: SIEGE, 68
 BONUS_ALL = [[0, 0, 0, 0], [0, 8, 6, 3], [0, 12, 8, 5]]
 BONUS_IN = [[0, 0, 0, 0], [0, 17, 12, 7], [0, 28, 17, 10]]
 BONUS_IN_GUARD = [[0, 0, 0, 0], [0, 67, 12, 7], [0, 63, 17, 10]]
-STOP = [0, 100, 125]    # 0 = keep the stock threshold
+# RAF-10 fire spreading: an in-range Short/Long candidate gets FREE on top unless it is saturated,
+# i.e. its goal counter [unit+0x858] (goals targeting it, FUN_009d6940 ++ / FUN_009d5990 --) counts
+# 3 or more other units (the attacker's own goal on it does not count). Siege is never saturated.
+# FREE > the largest gap a saturated target can open over a free in-range one (archer tier 18 +
+# targets me 15 + weaker 6 + 6 = 45 Short; 25 + 10 + 4 + 4 = 43 Long); out-of-range scores are
+# unchanged, so a saturated target in range still beats every target out of range.
+FREE = 50
+SATURATED = 3           # stock stop rule: [cand+0x858] < 3 (0xA8CD82)
+STOP = [0, 155, 175]    # Guard siege in range (30/50 + 75 + FREE); 0 = keep the stock threshold
+GOAL, GOAL_TARGET, TARGET_UNIT, COUNT = 0x608, 0x40, 0x94, 0x858
+DYNCAST = 0xC34896      # __RTDynamicCast thunk, called by the stock "targets me" test (0xA8CC3A)
+TD_GOAL, TD_ATTACK = 0xCE819C, 0xCE8E5C     # RTTI EEUnitGoal -> EEUGAttackUnit
 
 # per scorer: (in-range hook, its stock length, return), (sum hook, return), stop hook,
-# class operand, candidate reg, attacker, score reg
+# class operand, candidate reg, candidate unit (goal counter / goal target), attacker, score reg
 EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI = range(8)
 SITES = {
-    "unit scan FUN_00a8c8c0": dict(
+    "unit scan FUN_00a8c8c0": dict(   # stock reads [edi+0x858] / [edi+0x608] itself
         fn=(0xA8C8C0, 0xA8CDB0), inrange=(0xA8CC6E, 9, 0xA8CC77), total=(0xA8CD25, 0xA8CD2A),
-        stop=0xA8CD90, cls=(ESI, 0x58), cand=EDI, att=("mem", ESI, 0x24), score=EBP),
-    "grid scan FUN_00a92810": dict(
+        stop=0xA8CD90, cls=(ESI, 0x58), cand=EDI, unit=("reg", EDI), att=("mem", ESI, 0x24), score=EBP),
+    "grid scan FUN_00a92810": dict(   # grid entry; its unit is [edi+0x94] (stock 0xA92C8x)
         fn=(0xA92810, 0xA92DFC), inrange=(0xA92CE1, 15, 0xA92CF0), total=(0xA92D86, 0xA92D8B),
-        stop=0xA92DA5, cls=(EBP, 0x14), cand=EDI, att=("reg", EBX), score=ESI),
-    "formation FUN_00935fa0": dict(
+        stop=0xA92DA5, cls=(EBP, 0x14), cand=EDI, unit=("mem", EDI, TARGET_UNIT), att=("reg", EBX), score=ESI),
+    "formation FUN_00935fa0": dict(   # stock reads [esi+0x608]
         fn=(0x935FA0, 0x93636F), inrange=(0x936294, 15, 0x9362A3), total=(0x936350, 0x936355),
-        stop=None, cls=(EDI, 0x68), cand=ESI, att=("reg", EBP), score=EBX),
+        stop=None, cls=(EDI, 0x68), cand=ESI, unit=("reg", ESI), att=("reg", EBP), score=EBX),
 }
 STOCK_TOTAL = {0xA8CD25: "03e883c404", 0xA92D86: "03f083c404", 0x936350: "83c40403d8"}
 STOCK_STOP = "a160c9d200"   # mov eax, [TABLE]
@@ -182,16 +195,60 @@ def gen():
     s.label("stop_keep")
     s.raw(0xC3)
 
+    # inrange: ecx = class (0..2), edx = candidate, [esp+4] = candidate unit, [esp+8] = attacker
+    # -> edx = in-range bonus (T_IN or T_IN_G, + FREE unless saturated); clobbers eax, ecx; ret 8
+    s.label("inrange")
+    s.rel32(b"\xe8", s.labels["tier"])                  # call tier
+    s.raw(0x8D, 0x04, 0x88)                             # lea eax,[eax+ecx*4]
+    s.raw(0x50)                                         # push eax
+    s.raw(0x8B, 0x44, 0x24, 0x0C)                       # mov eax,[esp+12] (attacker)
+    s.rel32(b"\xe8", s.labels["guard"])                 # call guard
+    s.raw(0x58)                                         # pop eax
+    s.jcc8(JNE, "in_plain")
+    s.raw(0x0F, 0xB6, 0x90); s.u32(T_IN_G)              # movzx edx, byte [eax+T_IN_G]
+    s.jcc8(0xEB, "in_free")
+    s.label("in_plain")
+    s.raw(0x0F, 0xB6, 0x90); s.u32(T_IN)                # movzx edx, byte [eax+T_IN]
+    s.label("in_free")
+    s.raw(0xE3); s.fix.append((len(s.b), "in_ret")); s.raw(0)   # jecxz (Melee: no FREE)
+    s.raw(0x83, 0xE0, 0x03)                             # and eax,3 (tier)
+    s.raw(0x3C, SIEGE); s.jcc8(JE, "in_add")            # cmp al,SIEGE; je (never saturated)
+    s.raw(0x8B, 0x4C, 0x24, 0x04)                       # mov ecx,[esp+4] (candidate unit)
+    s.raw(0xE3); s.fix.append((len(s.b), "in_add")); s.raw(0)   # jecxz (no unit: free)
+    s.raw(0x83, 0xB9); s.u32(COUNT); s.raw(SATURATED)   # cmp dword [ecx+0x858],3
+    s.jcc8(0x72, "in_add")                              # jb (fewer than 3 goals on it)
+    s.raw(0x8B, 0x44, 0x24, 0x08)                       # mov eax,[esp+8] (attacker; flags kept)
+    s.jcc8(JA, "in_ret")                                # ja (4+: saturated even without mine)
+    s.raw(0x85, 0xC0); s.jcc8(JZ, "in_ret")             # test eax,eax; jz
+    # exactly 3: is one of them my own goal? EEUGAttackUnit target == candidate unit
+    s.raw(0x52, 0x51)                                   # push edx; push ecx
+    s.raw(0x6A, 0x00); s.raw(0x68); s.u32(TD_ATTACK); s.raw(0x68); s.u32(TD_GOAL); s.raw(0x6A, 0x00)
+    s.raw(0xFF, 0xB0); s.u32(GOAL)                      # push dword [eax+0x608]
+    s.rel32(b"\xe8", DYNCAST)                           # call __RTDynamicCast
+    s.raw(0x83, 0xC4, 0x14)                             # add esp,0x14
+    s.raw(0x59, 0x5A)                                   # pop ecx; pop edx
+    s.raw(0x85, 0xC0); s.jcc8(JZ, "in_ret")             # no attack goal: saturated
+    s.raw(0x8B, 0x40, GOAL_TARGET)                      # mov eax,[eax+0x40] (FUN_004a19d0)
+    s.raw(0x85, 0xC0); s.jcc8(JZ, "in_ret")
+    s.raw(0x39, 0x88); s.u32(TARGET_UNIT)               # cmp [eax+0x94],ecx
+    s.jcc8(JNE, "in_ret")
+    s.label("in_add")
+    s.raw(0x83, 0xC2, FREE)                             # add edx,FREE
+    s.label("in_ret")
+    s.raw(0xC2, 0x08, 0x00)                             # ret 8
+
     def load_class(site):                               # mov ecx,[base+disp]
         base, disp = site["cls"]
         s.b += modrm_disp8(0x8B, ECX, base, disp)
 
-    def load_attacker(site):                            # eax = attacker
-        a = site["att"]
-        if a[0] == "mem":
-            s.b += modrm_disp8(0x8B, EAX, a[1], a[2])
+    def push_operand(op):                               # push reg / push dword [base+disp]
+        if op[0] == "mem":
+            if op[2] < 0x80:
+                s.b += modrm_disp8(0xFF, 6, op[1], op[2])
+            else:
+                s.raw(0xFF, 0x80 | 6 << 3 | op[1]); s.u32(op[2])
         else:
-            s.raw(0x8B, 0xC0 | EAX << 3 | a[1])
+            s.raw(0x50 + op[1])
 
     def hook(va, length, target, stock_hex, note):
         h = bytearray(b"\xe9" + struct.pack("<i", target - (va + 5))) + b"\x90" * (length - 5)
@@ -200,7 +257,7 @@ def gen():
     for name, site in SITES.items():
         tag = name.split()[0]
         cand, score = site["cand"], site["score"]
-        # in-range block: stock add of +0x08, then T_IN / T_IN_G
+        # in-range block: stock add of +0x08, then the in-range bonus
         va, n, ret = site["inrange"]
         stock = STOCK[va - BASE:va - BASE + n]
         entry = s.here
@@ -208,18 +265,9 @@ def gen():
         load_class(site)
         s.raw(0x83, 0xF9, 0x02); s.jcc8(JA, f"{tag}_in_back")   # cmp ecx,2; ja
         s.raw(0x8B, 0xC0 | EDX << 3 | cand)             # mov edx,cand
-        s.rel32(b"\xe8", s.labels["tier"])              # call tier
-        s.raw(0x8D, 0x04, 0x88)                         # lea eax,[eax+ecx*4]
-        s.raw(0x50)                                     # push eax
-        load_attacker(site)
-        s.rel32(b"\xe8", s.labels["guard"])             # call guard
-        s.raw(0x58)                                     # pop eax
-        s.jcc8(JNE, f"{tag}_in_plain")
-        s.raw(0x0F, 0xB6, 0x90); s.u32(T_IN_G)          # movzx edx, byte [eax+T_IN_G]
-        s.jcc8(0xEB, f"{tag}_in_add")
-        s.label(f"{tag}_in_plain")
-        s.raw(0x0F, 0xB6, 0x90); s.u32(T_IN)            # movzx edx, byte [eax+T_IN]
-        s.label(f"{tag}_in_add")
+        push_operand(site["att"])                       # push attacker
+        push_operand(site["unit"])                      # push candidate unit
+        s.rel32(b"\xe8", s.labels["inrange"])           # call inrange
         s.raw(0x03, 0xC0 | score << 3 | EDX)            # add score,edx
         s.label(f"{tag}_in_back")
         s.rel32(b"\xe9", ret)
@@ -383,6 +431,16 @@ def static_checks():
     for va, w in want_in.items():
         got = [f"{i.mnemonic} {i.op_str}" for i in dis(STOCK, va, 15 if va != 0xA8CC6E else 9)]
         check(f"{va:#x}: stock in-range block adds row+8", got == w, str(got))
+    # the stock "candidate targets me" test the saturation check copies (goal +0x608, cast, +0x40, +0x94)
+    t = [f"{i.mnemonic} {i.op_str}" for i in dis(STOCK, 0xA8CC25, 0x2E)]
+    check("stock 0xA8CC25: [cand+0x608] cast EEUnitGoal -> EEUGAttackUnit via 0xC34896, then FUN_004a19d0",
+          t[:8] == ["mov eax, dword ptr [edi + 0x608]", "push 0", f"push {TD_ATTACK:#x}", f"push {TD_GOAL:#x}",
+                    "push 0", "push eax", f"call {DYNCAST:#x}", "mov ebx, dword ptr [0xd2c960]"]
+          and "call 0x4a19d0" in t, str(t))
+    f = [f"{i.mnemonic} {i.op_str}" for i in dis(STOCK, 0x4A19D0, 0x14)]
+    check("FUN_004a19d0: [goal+0x40] ? [[goal+0x40]+0x94] : 0",
+          f[:7] == ["mov eax, dword ptr [ecx + 0x40]", "test eax, eax", "je 0x4a19de",
+                    "mov eax, dword ptr [eax + 0x94]", "ret ", "xor eax, eax", "ret "], str(f))
     a = dis(STOCK, 0xA8CD90, 0x14)
     check("unit scan stop test: [TABLE][class]+0x24, jl skip, set +0x75",
           [f"{i.mnemonic} {i.op_str}" for i in a] ==
@@ -436,6 +494,22 @@ class Emu:
         u.mem_write(TABLE, struct.pack("<I", self.alloc(struct.pack("<3I", *rows))))
         self.behav = [self.alloc(bytes(0x80)) for _ in range(9)]
         u.mem_write(BEHAVIORS, struct.pack("<I", self.alloc(struct.pack("<9I", *self.behav))))
+        # __RTDynamicCast (msvcrt import, not bound here): cdecl stub, returns arg 0 when it is one of
+        # the fake EEUGAttackUnit goals and the requested types are EEUnitGoal -> EEUGAttackUnit
+        self.attack_goals, self.casts = set(), []
+        from unicorn import UC_HOOK_CODE
+
+        def dyncast(uc, addr, size, _):
+            esp = uc.reg_read(X.UC_X86_REG_ESP)
+            ret, ptr, _vf, src, dst, _rt = struct.unpack("<6I", uc.mem_read(esp, 24))
+            self.casts.append((ptr, src, dst))
+            ok = ptr in self.attack_goals and (src, dst) == (TD_GOAL, TD_ATTACK)
+            uc.reg_write(X.UC_X86_REG_EAX, ptr if ok else 0)
+            for r in (X.UC_X86_REG_ECX, X.UC_X86_REG_EDX):    # clobbered like the real call
+                uc.reg_write(r, 0xDEAD0000)
+            uc.reg_write(X.UC_X86_REG_ESP, esp + 4)
+            uc.reg_write(X.UC_X86_REG_EIP, ret)
+        u.hook_add(UC_HOOK_CODE, dyncast, begin=DYNCAST, end=DYNCAST)
 
     def alloc(self, data: bytes, size=None):
         a = self.next
@@ -443,13 +517,27 @@ class Emu:
         self.u.mem_write(a, data)
         return a
 
-    def unit(self, family, stance=5):
+    def unit(self, family, stance=5, goals=0):
+        """goals = [unit+0x858], the number of goals targeting this unit; +0x94 = the unit itself
+        (FUN_009f75c0)"""
         d = self.alloc(bytes(0x400))
         self.u.mem_write(d + FAMILY, struct.pack("<i", family))
-        un = self.alloc(bytes(0x900))
+        un = self.alloc(bytes(0x940))
         self.u.mem_write(un + DEF, struct.pack("<I", d))
         self.u.mem_write(un + STANCE, struct.pack("<I", self.behav[stance]))
+        self.u.mem_write(un + TARGET_UNIT, struct.pack("<I", un))
+        self.u.mem_write(un + COUNT, struct.pack("<I", goals))
         return un
+
+    def target(self, un, victim, attack=True):
+        """un's current goal (+0x608) aims at victim: goal +0x40 -> object whose +0x94 is victim"""
+        obj = self.alloc(bytes(0x100))
+        self.u.mem_write(obj + TARGET_UNIT, struct.pack("<I", victim))
+        goal = self.alloc(bytes(0x80))
+        self.u.mem_write(goal + GOAL_TARGET, struct.pack("<I", obj))
+        self.u.mem_write(un + GOAL, struct.pack("<I", goal))
+        if attack:
+            self.attack_goals.add(goal)
 
     def reg(self, r):
         return {EAX: self.X.UC_X86_REG_EAX, ECX: self.X.UC_X86_REG_ECX, EDX: self.X.UC_X86_REG_EDX,
@@ -554,35 +642,75 @@ def emu_checks(patched: bytes):
         v2, ok2 = ss.score(1, s_agg, s_spear, True, 0, 2)
         check(f"{tag}: STOCK Short in range = 30 + mult for siege and spear alike", v1 == v2 == 32 and ok1 and ok2,
               f"{v1} {v2}")
-        check(f"{tag}: Short in range, Aggressive: siege 55 > archer 48 > hero 40 > spear 30",
+        F = FREE    # in range and not saturated (every unit above has 0 goals on it)
+        check(f"{tag}: Short in range, Aggressive: siege 55 > archer 48 > hero 40 > spear 30 (each + FREE {F})",
               (sc(1, agg, siege, True), sc(1, agg, archer, True), sc(1, agg, hero, True), sc(1, agg, spear, True))
-              == (55, 48, 40, 30))
+              == (55 + F, 48 + F, 40 + F, 30 + F))
         check(f"{tag}: Short out of range: siege 8, archer 6, hero 3, spear 0",
               (sc(1, agg, siege, False), sc(1, agg, archer, False), sc(1, agg, hero, False),
                sc(1, agg, spear, False)) == (8, 6, 3, 0))
         check(f"{tag}: out-of-range siege that targets me (15) stays below an in-range spear (30)",
               sc(1, agg, siege, False, base=15) < sc(1, agg, spear, True))
-        check(f"{tag}: in-range bonus stays below the in-range term (Short 25 < 30, Long 40 < 50)",
-              sc(1, agg, siege, True) - 30 < 30 and sc(2, agg, siege, True) - 50 < 50)
-        check(f"{tag}: Guard: in-range siege 105, in-range archer 48 (stage 1 for the rest)",
-              (sc(1, grd, siege, True), sc(1, grd, archer, True), sc(1, grd, spear, True)) == (105, 48, 30))
+        check(f"{tag}: in-range tier bonus stays below the in-range term (Short 25 < 30, Long 40 < 50)",
+              sc(1, agg, siege, True) - 30 - F < 30 and sc(2, agg, siege, True) - 50 - F < 50)
+        check(f"{tag}: Guard: in-range siege 105, in-range archer 48 (stage 1 for the rest), each + FREE",
+              (sc(1, grd, siege, True), sc(1, grd, archer, True), sc(1, grd, spear, True)) == (105 + F, 48 + F, 30 + F))
         check(f"{tag}: Guard: out-of-range siege only stage 1 (8)", sc(1, grd, siege, False) == 8)
         check(f"{tag}: Guard in-range siege beats the best in-range archer that targets me",
               sc(1, grd, siege, True) > sc(1, grd, archer, True, base=15 + 6 + 6, mult=5))
-        check(f"{tag}: Stand Ground uses the stage 1 table", sc(1, sg, siege, True) == 55)
+        check(f"{tag}: best non-Guard score stays below the stop (Short {STOP[1]}, Long {STOP[2]})",
+              sc(1, agg, siege, True, base=15 + 6 + 6, mult=3) < STOP[1]
+              and sc(2, agg, siege, True, base=10 + 4 + 4, mult=3) < STOP[2])
+        check(f"{tag}: Stand Ground uses the stage 1 table", sc(1, sg, siege, True) == 55 + F)
         nost = p.unit(37)
         p.u.mem_write(nost + STANCE, bytes(4))
         check(f"{tag}: null attacker / attacker without stance (0): no Guard bonus, no fault",
-              (sc(1, 0, siege, True), sc(1, nost, siege, True)) == (55, 55))
-        check(f"{tag}: Long in range: siege 90, archer 75, hero 65, Guard siege 125",
+              (sc(1, 0, siege, True), sc(1, nost, siege, True)) == (55 + F, 55 + F))
+        check(f"{tag}: Long in range: siege 90, archer 75, hero 65, Guard siege 125 (each + FREE)",
               (sc(2, agg, siege, True), sc(2, agg, cav, True), sc(2, agg, hero, True), sc(2, grd, siege, True))
-              == (90, 75, 65, 125))
+              == (90 + F, 75 + F, 65 + F, 125 + F))
         check(f"{tag}: siege tower / naval siege are siege; unknown family 200 is none",
-              (sc(1, agg, tower, True), sc(1, agg, ship, True), sc(1, agg, other, True)) == (55, 55, 30))
-        check(f"{tag}: Melee unaffected (in range +50, any family, any stance)",
-              (sc(0, agg, siege, True), sc(0, grd, siege, True), sc(0, agg, spear, False, base=1, mult=3))
-              == (50, 50, 4))
-        check(f"{tag}: base score and pushed term carried through", sc(1, agg, spear, True, base=-500, mult=3) == -467)
+              (sc(1, agg, tower, True), sc(1, agg, ship, True), sc(1, agg, other, True)) == (55 + F, 55 + F, 30 + F))
+        check(f"{tag}: Melee unaffected (in range +50, any family, any stance, no FREE)",
+              (sc(0, agg, siege, True), sc(0, grd, siege, True), sc(0, agg, spear, False, base=1, mult=3),
+               sc(0, agg, p.unit(40, goals=5), True)) == (50, 50, 4, 50))
+        check(f"{tag}: base score and pushed term carried through",
+              sc(1, agg, spear, True, base=-500, mult=3) == -467 + F)
+
+        # RAF-10 fire spreading: saturated = 3+ goals on the target that are not mine
+        wall = p.unit(29)                               # archer standing on a wall segment
+        p.u.mem_write(wall + 0x594, struct.pack("<I", p.alloc(bytes(0x100))))
+        sat_arch, free_spear = p.unit(29, goals=SATURATED), p.unit(40)
+        check(f"{tag}: (a) wall archer: saturated archer that shoots me 63 < free spear in range 80",
+              sc(1, wall, sat_arch, True, base=15) == 63 and sc(1, wall, free_spear, True) == 30 + F
+              and sc(1, wall, sat_arch, True, base=15 + 6 + 6, mult=2) < sc(1, wall, free_spear, True))
+        check(f"{tag}: (a) Long: saturated archer that shoots me < free spear in range",
+              sc(2, wall, sat_arch, True, base=10 + 4 + 4, mult=2) < sc(2, wall, free_spear, True))
+        check(f"{tag}: (b) free archer in range 98 > free spear in range 80",
+              sc(1, wall, p.unit(29, goals=SATURATED - 1), True) == 48 + F > sc(1, wall, free_spear, True))
+        sat_siege = p.unit(30, goals=SATURATED + 5)
+        check(f"{tag}: (c) saturated siege keeps FREE (105) > free archer (98); Guard 155",
+              sc(1, wall, sat_siege, True) == 55 + F > sc(1, wall, archer, True)
+              and sc(1, grd, sat_siege, True) == STOP[1])
+        mine = p.unit(29)
+        p.target(mine, sat_arch)
+        check(f"{tag}: (d) my own goal on a target with 3 goals: not saturated (98 > spear 80)",
+              sc(1, mine, sat_arch, True) == 48 + F > sc(1, mine, free_spear, True))
+        over = p.unit(29, goals=SATURATED + 1)
+        check(f"{tag}: (d) 4 goals incl. mine: saturated (48)", (p.target(mine, over), sc(1, mine, over, True))[1] == 48)
+        other_goal = p.unit(29)
+        p.target(other_goal, p.unit(40))
+        check(f"{tag}: (d) my goal aims elsewhere / is no attack goal / no attacker: saturated (48)",
+              (sc(1, other_goal, sat_arch, True), sc(1, 0, sat_arch, True)) == (48, 48)
+              and (p.target(mine, sat_arch, attack=False), sc(1, mine, sat_arch, True))[1] == 48)
+        p.target(mine, sat_arch)
+        sat_spear = p.unit(40, goals=SATURATED)
+        check(f"{tag}: (e) everything saturated: archer 48 > spear 30 > 0, order kept",
+              sc(1, wall, sat_arch, True) == 48 > sc(1, wall, sat_spear, True) == 30 > 0)
+        check(f"{tag}: (e) saturated in range (spear 30) beats every free target out of range",
+              sc(1, wall, sat_spear, True) > max(sc(1, wall, siege, False, base=15 + 6), sc(1, wall, archer, False, base=15)))
+        check(f"{tag}: (e) out of range: goal counter ignored",
+              (sc(1, wall, sat_arch, False), sc(1, wall, archer, False)) == (6, 6))
         check(f"{tag}: stack + other registers preserved", regs_ok)
 
     # stop thresholds
@@ -600,7 +728,8 @@ def emu_checks(patched: bytes):
         return r["end"] == C_STOP_EXIT, stored == (0x1234, score) and r[EBP] == fr and r[ESI] == score
 
     for label, fn in (("unit scan", stop_a), ("grid scan", stop_c)):
-        res = [fn(p, c, v) for c, v in ((0, 49), (0, 50), (1, 15), (1, 99), (1, 100), (2, 124), (2, 125))]
+        res = [fn(p, c, v) for c, v in ((0, 49), (0, 50), (1, 15), (1, STOP[1] - 1), (1, STOP[1]),
+                                        (2, STOP[2] - 1), (2, STOP[2]))]
         check(f"{label}: stop at Melee >= 50 (stock), Short >= {STOP[1]}, Long >= {STOP[2]}",
               [r[0] for r in res] == [False, True, False, False, True, False, True], str(res))
         check(f"{label}: stop test keeps score/ctx registers and stores", all(r[1] for r in res))
